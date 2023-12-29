@@ -1,0 +1,9 @@
+
+
+-   Context object
+
+    In DRF, a context object is indeed used to pass information from a view to its serializer.
+    This context can be accessed in the serializer through self.context.
+
+
+-   

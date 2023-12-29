@@ -1,0 +1,340 @@
+                   
+                   2- Building RESTful APIs with Django REST Framework
+    
+    pipenv install djangorestframework and add it in installed apps => 'rest_framework'
+
+
+    - Creating API Views:
+
+      A view function takes a request and returns the response.
+      We start with the store.views.py.
+
+      In django we have two classes: HttpRequest and HttpResponse
+      But django rest framework also comes with its own request and response classes: Request and Response
+      These classes are simpler and more powerful than those in django
+
+      For example in django we use:
+
+        from django.shortcuts import render
+        from django.http import HttpResponse
+
+        def product_list(request):
+            return HttpResponse("ok")
+    
+      In DRF we use:
+
+        from django.shortcuts import render
+        from rest_framework.decorators import api_view
+        from rest_framework.response import Response
+
+
+        @api_view()
+        def product_list(request):
+            return Response("ok")
+
+        By using the api_view decorator, the request object that we receive as a parameter of
+        product_list will be an instance of the Request class.
+      
+      By using DRF, we have a browsable API when we go to the url of this view. It makes it easy to
+      test endpoints in the browser. 
+
+    - Creating Serializers:
+      
+      In the above lesson, we created an APIView. Now, instead of returning "ok" in the response,
+      we want to include the list of products. So we need a way to convert product objects to JSON
+      object. In DRF we have a class called JSONRenderer. This class has a method called render that
+      takes a dictionary object and return a JSON object. So if we convert a product object to python
+      dictionary, we can pass it to this method and get a JSON object. And this is where serializers 
+      come into the picture. A serializer is an object that knows how to convert a model instance, 
+      like a product object, to Python dictionary. 
+      
+      We create serializers.py:
+        from rest_framework import serializers
+
+        class ProductSerializer(serializers.Serializer):
+            id = serializers.IntegerField()
+            title = serializers.CharField(max_length=255)
+            unit_price = serializers.DecimalField(max_digits=6, decimal_places=2)
+    
+    - Serializing Objects:
+      
+      As we now have a serializer, let's learn how to use it to convert a product object to JSON
+      object, and then include it in response. In views.py:
+
+        from .models import Product
+        from .serializers import ProductSerializer
+
+        @api_view()
+        def product_detail(request, id):
+            # get the product object:
+            product = Product.objects.get(pk=id)
+            # create a serializer and give it this product object.
+            serializer = ProductSerializer(product)
+            # now, the moment we create this serializer, this serializer will convert our product object to a
+            # dictionary. And we can get that dictionary with => serializer.data
+            return Response(serializer.data)
+    
+      At this point, we see that DRF represents our price field in string. This is the default behaviour 
+      of DRF. To change it, we add the following in settings.py:
+        
+          REST_FRAMEWORK = {"COERCE_DECIMAL_TO_STRING": False}
+
+      What if the requested product doesn't exist? We will get an exception. Because one of the key
+      concepts of RESTful APIs is that even though the object doesn't exist, we should return a response
+      and the status of the response should be 404. 404 means "not found". To fix this we first import get_object_or_404
+      and rearrange our code as in the following:
+
+        from django.shortcuts import get_object_or_404
+
+        @api_view()
+        def product_detail(request, id):
+            product = get_object_or_404(Product, pk=id)
+            serializer = ProductSerializer(product)
+            return Response(serializer.data)
+    
+      Now, let's work on our other view method where we send not only a product but all of the products:
+
+        @api_view()
+        def product_list(request):
+            # we need not an Product objects but all Product objects, so that will be a queryset:
+            queryset = Product.objects.all()
+            # in the previous example we gave the serializer a product object. But we can also give our serializer a queryset:
+            serializer = ProductSerializer(queryset, many=True)
+            # we set many=True so that the serializer knows that it should iterate over this queryset and convert each product object
+            # to a dictionary.
+            return Response(serializer.data)
+    
+    - Creating Custom Serializer Fields:
+      
+      The objects that we return from our API don't necessarily have to look like the objects in our application. 
+      So, API Model != Data Model
+
+      We can decide to add new fields that don't exist in the Product class. For example:
+
+        price_with_tax = serializers.SerializerMethodField(
+        method_name="calculate_tax")
+
+        def calculate_tax(self, product: Product):
+            return product.unit_price * Decimal(1.1)
+      
+      Now, let's say we want to change the name of unit_price to price. If we do that, there will be an exception Because
+      DRF will not be able to match price in the serializer with unit_price in models. To be able to change its name, we 
+      should also pass this => source="unit_price":
+        price = serializers.DecimalField(max_digits=6, decimal_places=2, source="unit_price")
+
+    - Serializing Relationships:
+      
+      When returning a product, we can include a related object like a collection.
+      There are a few ways we can do this:
+
+      * 1-  Primary key (PrimaryKeyRelatedField): (returns the primary key of collection)
+            With this, we can include the primary key (=id) of each collection in a product object:
+                collection = serializers.PrimaryKeyRelatedField(queryset = Collection.objects.all())
+            In the API the above field is seen as "collection":[pk_of_the_collection], for example => "collection":3
+    
+      * 2-  String (StringRelatedField) (returns the string representation (__str__ method) of collection):
+                collection = serializers.StringRelatedField()
+
+        IMPORTANT NOTE: We have a problem here. When we added the above line, we see that SQL is making 1000 queries (one
+        extra query for each product). In order to prevent this, in views.py, where we make a query for all products,
+        we should arrange the query as in the following:
+                queryset = Product.objects.select_related("collection").all() 
+    
+      * 3-  Nested object:
+            For this, we first create CollectionSerializer:
+                class CollectionSerializer(serializers.Serializer):
+                id = serializers.IntegerField()
+                title = serializers.CharField(max_length=255)
+            Then, inside ProductSerializer:
+                collection = CollectionSerializer()
+      
+      * 4-  Hyperlink:
+            Instead of including an object inside product object as we did above(3), we can include a hyperlink
+            to an endpoint for viewing that collection. 
+            
+            In ProductSerializer:
+                    collection = serializers.HyperlinkedRelatedField(
+                    queryset=Collection.objects.all(),
+                    view_name="collection-detail"
+                    # currently we have no view named collection-detail, so we create it in views.py and add in urls.py
+                    # and give a name there (also note that parameter should be pk not id => <int:pk>)
+                )
+
+            We need to pass our request object to our serializer because the request contains information about urls.
+            So in in the view function for retrieving all products in views.py (this is where we initialize the product
+            serializer), by using the context object, we can give this serializer extra stuff. In product_list in views.py:
+                serializer = ProductSerializer(queryset, many=True, context={"request": request})
+
+
+    - Model Serializers:
+
+      So far, we wrote our serializers without ModelSerializer. Using the ModelSerializer, we can quickly create a serializer.
+      Plus, when in the future we may change some part of our models, this wont' affect serializers.
+            class ProductSerializer(serializers.ModelSerializer):
+                class Meta:
+                    model = Product
+                    fields = ["id", "title", "unit_price", "price_with_tax", "collection"]
+                # note: fields='__all__' is a bad practice. Always explicitly specify your fields to have control.
+                # by default, ModelSerializer use primary key for related fields. If this is not what you want, 
+                # you can always override it:
+                """collection = serializers.HyperlinkedRelatedField(
+                    queryset=Collection.objects.all(),
+                    view_name="collection-detail")"""
+
+                price_with_tax = serializers.SerializerMethodField(
+                    method_name="calculate_tax")
+
+                def calculate_tax(self, product: Product):
+                    return product.unit_price * Decimal(1.1)
+      
+
+    - Deserializing Objects:
+
+      Deserialization is the opposite of serialization, and it happens when we receive data from the client. 
+      Let's say client wants to create a new product. To do this, it should include a product object in the body 
+      of request. On the server, we have to read this data and deserialize it so we get a product object and store
+      it in the database. 
+
+      First, we passan argument to the api_view decorator of product_list => @api_view(["GET", "POST"])
+      "GET" is supported by default. But because we pass the POST, we should also add it explicitly.
+            @api_view(['GET', 'POST'])
+            def product_list(request):
+                if request.method == 'GET':
+                    queryset = Product.objects.select_related("collection").all()
+                    serializer = ProductSerializer(
+                        queryset, many=True, context={"request": request})
+                    return Response(serializer.data)
+                elif request.method == 'POST':
+                    # ProductSerializer will deserialize the data:
+                    serializer = ProductSerializer(data=request.data)
+                    return Response('ok')
+    
+    - Validating Data:
+      After the ProductSerializer deserialize the data (serializer = ProductSerializer(data=request.data)), 
+      this data is available in an attribute called "serializer.validated_data". But before we can access this attiribute,
+      first, we have to validate the data, otherwise we get exception. Here is the rearranged part of the above code:
+            
+            serializer = ProductSerializer(data=request.data)
+            if serializer.is_valid():
+                serializer.validated_data
+                # the RESTful convention is to send the product that was created:
+                return Response(serializer.data, status=status.HTTP_201_CREATED)
+            else:
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+                # validation errors are automatically included in response (for example, "This field is required.", etc.)
+    
+      There is a more concise way of writing this:
+
+            serializer = ProductSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            print(serializer.validated_data)
+            # the RESTful convention is to send the product that was created:
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+            # If we get invalid data, DRF will automatically return a response with a status of 400, including validation errors.
+
+      Now, let's talk about validated_data attribute. it is an ordered dictionary with key-value pairs. In the next lesson,
+      we are going to save this in the database. For now, let's not worry about it. One more thing we will cover in this
+      lesson is validation at the object level. There are situations where validating the requested data involves comparing
+      multiple fields. For example, think of the scenario where a user registers. So we have username field as well as 
+      password and confirm password. We want to make sure these two fields (password and confirm password) are equal. 
+      With our current implementation, we cannot achieve this. Because our validation rules come from the definition of model
+      fields. So if we need anything extra, we need to override the validate method in our serializer. So in our 
+      ProductSerializer:
+            # here we can define the validate method. This is actually defined in the base class (ModelSerializer), but
+            # we are overriding it here. Of course, this doesn't make sense in the context of our product serializer, but it
+            # is just an example:
+            def validate(self, data):
+                if data['password'] != data['confirm_password']:
+                    return serializers.ValidationError('Password do not match')
+                return data
+                # So in our validate method, we should either return a validation error or the actual data(if it passes our validation)
+         
+    - Saving Objects:
+      
+      Our product serializer is inheriting the ModelSerializer class. This ModelSerializer has a save method that
+      we can use for creating or updating a product. So in product_list view, right after validating the data, we can call
+      the save method:
+            serializer = ProductSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            # the RESTful convention is to send the product that was created:
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+      
+      There are situations where we want to override how a product is created (for example, perhaps we want to set some
+      special fields or associate a product with another object in the database). In our serializer class, we can 
+      override the create method:
+
+            def create(self, validated_data):
+                # we unpack the validated_data dictionary:
+                product = Product(**validated_data)
+                # then we can set those special fields. For example:
+                product.other = 1
+                product.save()
+                return product
+
+        So "create" is one of the methods that exists in the base ModelSerializer class, and it's called by the 
+        save method if we try to create a new product. 
+        Similarly, we have another method for updating a product. We can override how a product is updated. For example:
+        
+            def update(self, instance, validated_data):
+                instance.unit_price = validated_data.get("unit_price")
+                # In our case, we didn't need to write the above code as DRF automatically set all these fields for us. 
+                instance.save()
+                return instance
+        
+      We are done with creating a product. Now let's see how we can update a single product. 
+      For updating a product, we should modify our product_detail view:
+
+            @api_view(['GET', 'PUT'])
+            def product_detail(request, id):
+                product = get_object_or_404(Product, pk=id)
+                if request.method == 'GET':
+                    serializer = ProductSerializer(product)
+                    return Response(serializer.data)
+                elif request.method == 'PUT':
+                    # here we need to deserialize the data, validate it, and save the project object in the database:
+                    serializer = ProductSerializer(product, data=request.data)
+                    serializer.is_valid(raise_exception=True)
+                    serializer.save()
+                    # the RESTful convention is to send the product that was updated:
+                    return Response(serializer.data)
+
+    - Deleting Objects:
+
+      We are going to implement this operation (deleting a product) in the product_detail view:
+
+            @api_view(['GET', 'PUT', 'DELETE'])
+            def product_detail(request, id):
+                .
+                .
+                .
+                elif request.method == 'DELETE':
+                    product.delete()
+                    # this is also a convention to send 204 when deleting a resource:
+                    return Response(status=status.HTTP_204_NO_CONTENT) 
+      
+      Now, imagine that we have an OrderItem(s) that is/are associated with this product. In this case, we would get
+      an exception ("cannot delete....."). In this case, we don't want to show an exception to the user, because to them, 
+      it looks like our application blew up. Instead, we want to return a proper response, and in the body of response,
+      we want to include an error message. So, before we delete a product, we should check to see if there are any order
+      items associated with this product:
+
+            @api_view(['GET', 'PUT', 'DELETE'])
+            def product_detail(request, id):
+                .
+                .
+                .
+                elif request.method == 'DELETE':
+                    if product.orderitems.count() > 0:
+                        return Response(
+                            {"error": "Product cannot be deleted because it is associated with an order item."},
+                            status=status.HTTP_405_METHOD_NOT_ALLOWED)
+                    product.delete()
+                    return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+
+                               
+
+
+  

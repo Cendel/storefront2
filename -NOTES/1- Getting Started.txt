@@ -1,0 +1,31 @@
+
+
+   We created a new database (storefront2) for this second part of the django course.
+   - We made the necessary adjustments in the database section of the settings file.
+   
+   - We install application dependencies:
+        pipenv install
+
+    - Here, I face this problem: The instructor had developed this project using an older version of python (3.9).
+        So, at first I tell virtual environment which version i am going to use:
+        pipenv --python 3.12
+        then
+        pipenv install
+
+        Note the following note I took in the first part of the course:
+            at this point, the instructor told us to do "pipenv install mysqlclient" but my
+            terminal kept giving errors every time i tried to install mysqlclient. So instead, i
+            installed "pipenv install pymysql" and import it in __init__.py file which is in the
+            same folder with settings.py
+    
+    - to activate environment => pipenv shell
+    
+    - python manage.py migrate
+        Tables are created in the database (storefront2) according to our models
+
+    - We load the data to database using seed.sql file the instructor supplied:
+        File => Open SQL Script => Select file => click on the lightning bolt icon
+        python manage.py migrate
+    
+    python manage.py createsuperuser
+

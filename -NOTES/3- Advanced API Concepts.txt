@@ -1,0 +1,702 @@
+                                
+                                --- 3- ADVANCED API CONCEPTS ---
+
+- Class-based Views
+  
+  All the views we have created so far have been function-based views. But class-based views make our code cleaner and more concise.
+  Plus, they provide a lot of reuse opportunities. 
+
+  Let's convert our product_list view function to a class-based view.
+
+    from rest_framework.views import APIView
+    # This is the base class for all class based views.
+
+    class ProductList(APIView):
+    def get(self, request):
+        queryset = Product.objects.select_related("collection").all()
+        serializer = ProductSerializer(
+            queryset, many=True, context={"request": request})
+        return Response(serializer.data)
+
+    def post(self, request):
+        serializer = ProductSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+  In order to use this class, we have to arrange our urls.py:
+    
+    path('products/', views.ProductList.as_view()),
+    # Our class has a method called "as_view". When we call this method, this method will convert
+      this class to a regular function-based view. So, at the end of the day, there is a function 
+      under the hood that gets called. But when writing our code, we use a classes and that means
+      we get access to all OOP features.
+
+
+- Mixins
+  
+  There is always a repeating pattern when writing our views. 
+  For example, when listing our objects, here is the pattern:
+    
+    1- First, we create a queryset:
+        queryset = Product.objects.select_related("collection").all()
+    2- then create a serializer:
+        serializer = ProductSerializer(queryset, many=True, context={"request": request})
+    3- and return the response with a serialized data:
+        return Response(serializer.data)
+  
+    There are only two differences in our implementations:
+        - how we create the queryset (for example when listing products, the queryset we need may be different than 
+          when listing collections)
+        - the serializer we use (for example, ProductSerializer for products, and CollectionSerializer for collections)
+    
+  When creating a resource (post method), we have another pattern:
+    1- First, we create a serializer to deserialize the data:
+        serializer = ProductSerializer(data=request.data)
+    2- then validate the incoming data:
+        serializer.is_valid(raise_exception=True)
+    3- and then save the data:
+        serializer.save()
+    4- and return a response:
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+  As we see, there are repeating patterns. This is where mixins come into the picture.
+  A mixin is a class that encapsulate some pattern of code like this. 
+
+  We import two of these mixins:
+    from rest_framework.mixins import ListModelMixin, CreateModelMixin
+  
+  So in DRF we have various mixins for performing different kinds of operations on a resource. 
+  Here is all available mixins:
+    https://www.django-rest-framework.org/api-guide/generic-views/#mixins
+
+
+- Generic Views
+  
+  Most of the time, we don't use mixins directly.
+  Instead, we use concrete classes that combine one or more mixins. 
+  We call these classes "Generic Views".
+  
+  Generic views consist of the base GenericAPIView class and mixins.
+  For example, ListCreateAPIView consists of => GenericAPIView + ListModelMixin and CreateModelMixin:
+               UpdateAPIView consists of     => GenericAPIView + UpdateModelMixin
+        
+        from rest_framework.generics import ListCreateAPIView
+
+        class ProductList(ListCreateAPIView):
+            def get_queryset(self):
+                queryset = Product.objects.select_related("collection").all()
+
+            def get_serializer_class(self):
+                return ProductSerializer()
+
+            # we had a context object in our code. Here is how to add it in generic views:
+            def get_serializer_context(self):
+                return {"request": self.request}
+
+
+    So, this is more simpler and more concise than what we previously had.
+    But we can make it even more concise:
+
+    In the GenericAPIView class, we have two attributes called "queryset" and "serializer_class".
+    If you want to have some logic (for example, checking the current user, and depending on the currrent user and 
+    their permissions, providing different querysets) for creating a queryset or a serializer, we can implement that 
+    logic in these methods in the above example (get_queryset and get_serializer_class methods).
+    
+    But if we don't have any special logic, and simply want to return an expression, or a class, 
+    we can use these attirubutes:
+
+        class ProductList(ListCreateAPIView):
+    
+            queryset = Product.objects.select_related("collection").all()
+            serializer_class = ProductSerializer
+
+            # we had a context object in our code. Here is how to add it in generic views:
+            def get_serializer_context(self):
+                return {"request": self.request}
+
+
+- Customizing Generic Views
+
+  There are situations where a generic view may not quite work for us. Here is how we can customize it:
+
+    For example, our ProductDetail view provides three operations: get, put, and delete: 
+    
+            class ProductDetail(APIView):
+
+                def get(self, request, id):
+                    product = get_object_or_404(Product, pk=id)
+                    serializer = ProductSerializer(product)
+                    return Response(serializer.data)
+
+                def put(self, request, id):
+                    product = get_object_or_404(Product, pk=id)
+                    serializer = ProductSerializer(product, data=request.data)
+                    serializer.is_valid(raise_exception=True)
+                    serializer.save()
+                    return Response(serializer.data)
+
+                def delete(self, request, id):
+                    product = get_object_or_404(Product, pk=id)
+                    if product.orderitems.count() > 0:
+                        return Response(
+                            {"error": "Product cannot be deleted because it is associated with an order item."},
+                            status=status.HTTP_405_METHOD_NOT_ALLOWED)
+                    product.delete()
+                    return Response(status=status.HTTP_204_NO_CONTENT)
+            
+            
+            
+    We have a generic view (RetrieveUpdateDestroyAPIView) that provides all these operations. So to use it here, 
+
+            class ProductDetail(RetrieveUpdateDestroyAPIView):
+                queryset = Product.objects.all()
+                serializer_class = ProductSerializer
+
+                # Our logic in get and put methods are completely implemented in the retrieve and update mixins. 
+                # So, the above two attirubutes (queryset and serializer_class) are sufficient for them.
+                # But look at the delete method. We have some logic here that is specific to our application.
+                # So none of the mixins make sense DRF. They don't know about product, orderitems and their count.
+                # This is specific to our application. 
+                # So, here we need to override the delete method that we have inherited from the 
+                # RetrieveUpdateDestroyAPIView class:
+
+                def delete(self, request, id):
+                    product = get_object_or_404(Product, pk=id)
+                    if product.orderitems.count() > 0:
+                        return Response(
+                            {"error": "Product cannot be deleted because it is associated with an order item."},
+                            status=status.HTTP_405_METHOD_NOT_ALLOWED)
+                    product.delete()
+                    return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+- Viewsets
+
+  Currently we have two views for managing our products:
+        
+        class ProductList(ListCreateAPIView):
+
+            queryset = Product.objects.all()
+            serializer_class = ProductSerializer
+
+            def get_serializer_context(self):
+                return {"request": self.request}
+
+
+        class ProductDetail(RetrieveUpdateDestroyAPIView):
+            queryset = Product.objects.all()
+            serializer_class = ProductSerializer
+
+            def delete(self, request, pk):
+                product = get_object_or_404(Product, pk=pk)
+                if product.orderitems.count() > 0:
+                    return Response(
+                        {"error": "Product cannot be deleted because it is associated with an order item."},
+                        status=status.HTTP_405_METHOD_NOT_ALLOWED)
+                product.delete()
+                return Response(status=status.HTTP_204_NO_CONTENT)
+
+  
+  As you may notice, we have duplication across these classes (querysets and serializer_class are the same).
+  This is where we use Viewsets. 
+  Using a Viewset, we an combine the logic for multiple related views inside a single class. 
+  That's why it is called a Viewset: It is a set of related views. Here is how to use it:
+
+        from rest_framework.viewsets import ModelViewSet
+        # We imported the ModelViewSet class. 
+
+        class ProductViewSet(ModelViewSet):
+        # pay attention to the naming convention => our_source_name+ViewSet
+
+            queryset = Product.objects.all()
+            serializer_class = ProductSerializer
+
+            def get_serializer_context(self):
+                return {"request": self.request}
+
+            def destroy(self, request, *args, **kwargs):
+                if OrderItem.objects.filter(product_id=kwargs['pk']).count() > 0:
+                    return Response({'error': 'Product cannot be deleted because it is associated with an order item.'}, status=status.HTTP_405_METHOD_NOT_ALLOWED)
+
+                return super().destroy(request, *args, **kwargs)
+
+
+  So we have a single class for implementig the products endpoint. 
+  But our application is broken now, because in our urls module, we have to modify our urls module. In the next
+  lesson, we will see how we can use a router to create the route for ViewSet.
+
+  One last thing. If we inherit from ModelViewSet, we can perform all kinds of operations on a resource: We can
+  list, create, update, etc. What if we don't want to have write (create, update, delete) operations? We have
+  another class in the Viewset module, called ReadOnlyModelViewSet. If we inherit from this class, we can only
+  perform read (list, retrieve) operations:
+
+            class ProductViewSet(ReadOnlyModelViewSet):
+                .
+                .
+                .
+
+
+- Routers
+
+  When we use Viewsets, we don't explicitly register the urls patterns. That's the job of a router. 
+  So we register our Viewsets with a router, and the router will take care of generating these urls 
+  patterns for us. Here is how to do it in urls.py:
+
+            # import the SimpleRouter class:
+            from rest_framework.routers import SimpleRouter
+            from django.urls import path
+            from . import views
+
+            # create a router object:
+            router = SimpleRouter()
+            # and register our ViewSets with this router:
+            router.register('products', views.ProductViewSet)
+            # the first one is prefix, which is the value we are using in url. That is the name of our endpoint.
+            # with this line we are saying that the "products" endpoint should be managed by the ProductViewSet.
+            
+            # Finally set the urlpatterns:
+            urlpatterns = router.urls
+
+            # So this is how we can use routers.
+
+            # What if we have some specific patterns in urlpatterns? 
+            # Then, we don't want to set urlspatterns to router.urls.
+            # Instead, we arrange the urlpatterns in this way:
+
+            urlpatterns = [
+                path('', include(router.urls)),
+                # then we can have other paths for specific purposes
+                .
+                .
+                .
+            ]
+
+
+    In the rest_framework.routers module, we have another router called "DefaultRouter"
+
+            # import the DefaultRouter class:
+            from rest_framework.routers import DefaultRouter
+            from django.urls import path
+            from . import views
+
+
+            router = DefaultRouter()
+            router.register('products', views.ProductViewSet)
+            router.register('collections', views.CollectionViewSet)
+
+    
+    If we use this router, we get two additional features:
+    
+    1- If we go to our store app on the browser => http://127.0.0.1:8000/store/
+       On this page we can see various endpoints  that are available to us. 
+
+    2- If we go to => http://127.0.0.1:8000/store/products.json
+       We see our data in JSON format. 
+
+
+- Building the Reviews API
+  Now, we are going to build a system which enables users to make reviews about products. 
+  So there will be a nested structure here =>  store>products>reviews
+
+  Now we are going to take our API to the next level and introduce reviews.
+  So a given product can have reviews, and we should be able to access an individual review with the following url:
+    http://127.0.0.1:8000/store/products/1/reviews/1
+
+  But first, because we have nested resources, we need to talk about nested routers.
+  But before we do that, first we need to build our model.
+  There are three steps we need to follow:
+    Building the Model:
+    1- create a model class
+    2- create a migration
+    3- apply the migration
+
+  Now, let's do that:
+    
+    1- in models.py:
+
+        class Review(models.Model):
+            product = models.ForeignKey(
+                Product, on_delete=models.CASCADE, related_name='reviews')
+            name = models.CharField(max_length=255)
+            description = models.TextField()
+            date = models.DateField(auto_now_add=True)
+
+    2- python manage.py makemigrations
+    
+    3- python manage.py migrate
+  
+  Now, we are done with the model. Now, let's work on API. Once again, there are three steps we need to follow:
+    
+    Building the API:
+    1- create a serializer
+    2- create a view
+    3- register a route
+
+  Now, let's do that:
+    
+    1- in serializers.py:
+
+        class ReviewSerializer(serializers.ModelSerializer):
+            class Meta:
+                model = Review
+                fields = ['id', 'date', 'name', 'description']
+
+            # when we create or update a review, we need the id of the product that this review belongs to.
+            # So, we override the create method, and extract the product_id from the serializer's context.
+            # This product_id is extracted from the serializer’s context, which is set in the ReviewViewSet in views.py.
+            def create(self, validated_data):
+                product_id = self.context['product_id']
+                return Review.objects.create(product_id=product_id, **validated_data)
+    
+    2- in views.py:
+
+        class ReviewViewSet(ModelViewSet):
+            serializer_class = ReviewSerializer
+
+            def get_queryset(self):
+                return Review.objects.filter(product_id=self.kwargs['product_pk'])
+
+            def get_serializer_context(self):
+                # This method is overridden to provide additional context to the serializer.
+                # The context is a dictionary that can be accessed in the serializer's methods.
+                # Here, we're adding the product's primary key (product_pk) to the context.
+                # This is useful when creating a review, as the review needs to be associated with a product.
+                return {'product_id': self.kwargs['product_pk']}
+    
+    3- we need to register routes, and this is where we use nested routers.
+       We will talk about it in the following lesson.
+
+
+- Nested Routers:
+  
+  In the following project on GitHub called "drf-nested-routers:
+    https://github.com/alanjds/drf-nested-routers
+  On this page, you can see the instructions for using this library. 
+  
+  First, we install this library:
+    pipenv install drf-nested-routers
+  
+  Then, in urls.py:
+
+        from rest_framework_nested import routers
+        # in this module, we have a bunch of router classes. One of them is DefaultRouter that replaces the DefaultRouter
+        # that we imported from the rest_framework. So we are going to use DefaultRouter that comes with this new library:
+        
+        router = routers.DefaultRouter()
+
+        # we created the parent router. Now, let's create the child router:
+
+        products_router = routers.NestedDefaultRouter(router, 'products', lookup='product')
+        # we passed three arguments here: parent router, parent prefix, lookup parameter
+        # so that means: we are going to have a parameter called "product_pk" in our route.
+        # so we created a nested DefaultRouter and stored it in an object called "products_router"
+        # on this router, we are going to register our child resource:
+        products_router.register('reviews', views.ReviewViewSet,
+                                basename='product-reviews')
+        # we passed three arguments here: the prefix, our ViewSet, basename which is used as a prefix for generating the name of url
+        # so our routes are going to be called ".../product-reviews-list" or ".../product-reviews-detail"
+
+        # Now that we have two routers, we can combine the urls of both these routers and include them in the urlpatterns object:
+
+        # URLConf
+        urlpatterns = router.urls + products_router.urls
+
+  So, our current urls.py looks like this:
+
+        from django.urls import path
+        from rest_framework_nested import routers
+        from . import views
+
+
+        router = routers.DefaultRouter()
+        router.register('products', views.ProductViewSet)
+        router.register('collections', views.CollectionViewSet)
+
+        products_router = routers.NestedDefaultRouter(router, 'products', lookup='product')
+        products_router.register('reviews', views.ReviewViewSet, basename='product-reviews')
+
+        # URLConf
+        urlpatterns = router.urls + products_router.urls
+
+  Now, let's test our implementation. In browser, go to => http://127.0.0.1:8000/store/products/1/reviews/
+
+
+
+- Filtering
+
+  Currently, when we hit the products endpoint, we get all products on our database. 
+  But what if we want to filter these products, let's say filter them by a specific collection?
+  We should be able to pass a query string parameter, like:
+    http://127.0.0.1:8000/store/products?collection_id=6
+  
+  Let's see how we can implement this:
+
+    In our ProductViewSet, we have a queryset:
+        queryset = Product.objects.all()
+    
+    Here, we need to apply a filter. But as mentioned earlier, we cannot call the filter method here. 
+    So we need to delete this queryset and override the get_queryset method:
+
+        def get_queryset(self):
+            queryset = Product.objects.all()
+            collection_id = self.request.query_params['collection_id']
+            if collection_id is not None:
+                queryset = queryset.filter(collection_id=collection_id)
+            return queryset
+
+    Here we faced the following error. The error in the terminal reads:
+        AssertionError: `basename` argument not specified, and could not automatically determine the name from the viewset.....
+    The cause of the error:
+        Because we removed the queryset attribute in ProductViewSet, DRF cannot figure out the base name. 
+        In urls.py, we should add the basename:
+
+            router.register('products', views.ProductViewSet, basename='products')
+
+        By default, DRF uses the queryset attirubutes to figure out the basename. But because we deleted the queryset attiribute,
+        and now we have a method, DRF cannot figure out what the basename should be called. The logic in the get_queryset is
+        too complex for it. So we have to explicitly specify the basename.
+    
+    Now when we hit http://127.0.0.1:8000/store/products/ we get all the products.
+    and when we hit http://127.0.0.1:8000/store/products?collection_id=6 we get only the products with collection_id=6
+
+
+- Generic Filtering
+
+  We implemented the basic filter above. 
+  But what if, in addition to collection, we want to filter our products by another field? 
+  Then our filtering logic is going to get more complicated.
+  This is where we can use generic filtering. 
+  For this we are going to use a third-party library called 'django-filter'. So we can easily filter any models
+  by any fields. We don't have to hand code the filtering logic.
+
+    In the terminal:
+
+        pipenv install django-filter
+    and we add it in installed_apps => 'django_filters', (name of the app is different from the name of library)
+
+    In views.py:
+
+        from django_filters.rest_framework import DjangoFilterBackend
+        # this backend gives us generic filtering
+    
+    In ProductViewSet:
+
+        filter_backends = [DjangoFilterBackend]
+        # with this backend, all we have to do is specify what fields we want to use for filtering:
+        filterset_fields = ['collection_id']
+        # now we can completely remove our filtering logic (get_queryset method), and bring back our queryset attribute
+
+    So our ProductViewSet now looks like:
+        
+        class ProductViewSet(ModelViewSet):
+            queryset = Product.objects.all()
+            serializer_class = ProductSerializer
+            filter_backends = [DjangoFilterBackend]
+            filterset_fields = ['collection_id']
+
+            def get_serializer_context(self):
+                return {"request": self.request}
+
+            def destroy(self, request, *args, **kwargs):
+                if OrderItem.objects.filter(product_id=kwargs['pk']).count() > 0:
+                    return Response({'error': 'Product cannot be deleted because it is associated with an order item.'}, status=status.HTTP_405_METHOD_NOT_ALLOWED)
+
+                return super().destroy(request, *args, **kwargs)
+
+    Now we have successfully implemented the Generic Filtering.
+
+    With this filtering backend, we also get a new button on browser named 'Filters', which is very handy.
+
+    Now, let's take filtering to the next level. 
+    What if we want to filter by unit_price? 
+    We can simply add 'unit_price' to the filterset_fields attribute:
+        filterset_fields = ['collection_id', 'unit_price']
+    In this way, we can filter by unit_price => http://127.0.0.1:8000/store/products/?unit_price=10
+
+    But if we want to filter products by unit_price with a range of values (for example, products with 10<unit_price<20),
+    which makes more sense in this case, we should use custom filters. Custom filters are out of the scope of this course.
+    You can find all details about creating custom filters in the documentation below:
+         https://django-filter.readthedocs.io/en/stable/
+    But here is a quick example:
+        
+        In our store app folder, create a new file => filters.py
+
+            in filters.py:
+                from django_filters.rest_framework import FilterSet
+                from .models import Product
+
+
+                class ProductFilter(FilterSet):
+                    class Meta:
+                        model = Product
+                        # now, we specify how the filtering should be done for each field:
+                        fields = {
+                            'collection_id': ['exact'],
+                            'unit_price': ['gt', 'lt']
+                        }
+                        # for more details, look at the documentation.
+
+        In ProductViewSet in views.py:
+            Instead of using filterset_fields, we use:
+
+                filterset_class = ProductFilter
+                # so, all our filtering is encapsulated inside this class
+
+
+
+- Searching
+  
+  What if we want to find products by their title or description?
+  This is where we use searching. Searching is for text-based fields.
+
+    in views.py:
+        
+        we import:
+            from rest_framework.filters import SearchFilter
+        
+        in ProductViewSet:
+
+            # we add SearchFilter to filter_backends:
+            filter_backends = [DjangoFilterBackend, SearchFilter]
+            # we add search_fields attribute for fields we want to use for searching:
+            search_fields = ['title', 'description']
+            # we can also reference fields in related classes. For example, for the title of collections:
+            search_fields = ['title', 'description', 'collection__tile']
+            # but in our case, it doesn't make sense to add it, so we left it out.
+        
+    Now, we can reach the search box over the Filters button on the browser.
+
+
+
+- Sorting
+
+  Let's see how we can sort data:
+    
+    in views.py:
+
+        from rest_framework.filters import OrderingFilter
+    
+    in ProductViewSet:
+
+        # we add OrderingFilter to filter_backends:
+        filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+        # we add ordering_fields attribute for fields we want to use for ordering:
+        ordering_fields=['unit_price', 'last_update']
+        # note that, even though we are not returning last_update field in the API, we can use it for sorting.
+
+    Now, we have various ways to sort our data. We can reach there over the Filters button on the browser.
+    Notice that, query string parameters are added to the url as we making the ordering.
+
+
+- Pagination
+
+  in views.py:
+    
+    from rest_framework.pagination import PageNumberPagination
+
+  in ProductViewSet:
+    
+    pagination_class = PageNumberPagination
+  
+  now, we need to specify the page size. For that, in settings.py:
+    
+    inside REST_FRAMEWORK, we add:
+        REST_FRAMEWORK = {
+            .
+            .
+            .
+
+            'PAGE_SIZE': 10
+        }
+  
+  So we implemented pagination for products. 
+  Notice that when we go to products on the browser, we get an object of following properties:
+    
+    {
+    "count": 1000,
+    "next": "http://127.0.0.1:8000/store/products/?page=4",
+    "previous": "http://127.0.0.1:8000/store/products/?page=2",
+    "results": [
+        {
+            .
+            .
+            .
+  
+
+  This pagination iis currently only available in the products endpoint. 
+  If we want to have pagination everywhere, we can set it globally in our settings module:
+    
+    in settings.py, inside REST_FRAMEWORK, we set another setting called DEFAULT_PAGINATION_CLASS:
+
+        REST_FRAMEWORK = {
+            .
+            .
+            .
+        
+            'DEFAULT_PAGINATION_CLASS':'rest_framework.pagination.PageNumberPagination',
+            'PAGE_SIZE': 10
+        }
+  
+  Now, with this, we don't need to specify the pagination class for every view or per ViewSet.
+  So we can delete the pagination_class attribute we set inside ProductViewSet and the PageNumberPagination import.
+
+
+  We have another pagination class called limitoffsetpagination.
+  So instead of using a page number, we use a limit and an offset value.
+
+  in settings.py:
+    
+    we change the PageNumberPagination class to the LimitOffsetPagination class:
+
+        REST_FRAMEWORK = {
+            .
+            .
+            .
+
+            'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.LimitOffsetPagination',
+            'PAGE_SIZE': 10
+        }
+
+  
+  If you look at the browser, you can see that our query string parameters have changed:
+    .
+    .
+    "next": "http://127.0.0.1:8000/store/products/?limit=10&offset=10"
+    .
+    .
+  Instead of page number, we have limit and offset. For the next page we are going to take 10 products (limit=10)
+  and we are going to skip 10 products (offset=10). This is another way to paginate data, but quite often, we use 
+  PageNumberPagination.
+
+  In this project, we decided to use pagination only with products. So we deleted the pagination class we set in settings.py
+  and only set it in ProductViewSet as we did at the beginnig of the lesson.
+  One last thing to mention. We we implement the pagination this way (setting a pagination_class attribute in ProductViewSet
+  and setting the PAGE_SIZE in settings.py), Django warns us on the terminal:
+    
+         You have specified a default PAGE_SIZE pagination rest_framework setting, 
+         without specifying also a DEFAULT_PAGINATION_CLASS.
+  
+  There are two things to do here. 1- We can suppress this warning (by making changes in django settings), which is not an 
+  advisable approach. 2- We can create a custom pagination class, and set the page size there. Here is how to implement the 
+  second approach:
+    
+    create a new file in store app:
+        pagination.py
+
+        and inside it:
+
+            from rest_framework.pagination import PageNumberPagination
+
+            # we create a custom pagination class:
+            class DefaultPagination(PageNumberPagination):
+                page_size = 10
+    
+    delete the following from settings.py:
+        'PAGE_SIZE': 10
+    
+    now, in ProductViewSet:
+        # instead of PageNumberPagination, we use our default pagination class:
+        pagination_class = DefaultPagination
+  
+  Now, the error is gone.

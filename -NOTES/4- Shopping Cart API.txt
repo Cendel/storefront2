@@ -1,0 +1,331 @@
+
+                -- 4- Designing and Implementing a Shopping Cart API --
+
+In this section, we are going to put everything together and build a shopping cart API from A to Z. 
+
+
+- Designing the API
+
+  Our clients should be able to 
+    create a cart
+    add items to a cart
+    update the quantity of items
+    remove items from a cart
+    get a cart with its items
+    delete a cart
+  
+  Now, figure out what endpoints we need to support these operations.
+  For each operation, specify 
+    what kind of HTTP request which is sent to the server
+    the url endpoints
+    request (what is sent in the request)
+    response (what is received in the response)
+  
+
+  Operation             HTTP Method         url                     Request             Response
+  Creating a Cart       POST                /carts/                 {}                  cart
+  Getting a Cart        GET                 /carts/:id              {}                  cart
+  Deleting a Cart       DELETE              /carts/:id              {}                  {}
+  Addind an Item        POST                /carts/:id/items        {prodID, qty}       item
+  Updating an Item      PATCH               /carts/:id/items/:id    {qty}               {qty}  
+  Deleting an Item      DELETE              /carts/:id/items/:id    {}                  {}
+
+  Notes:
+    Creating a Cart: Body of request is empty, because our carts are anonymous. We don't want to force users
+                     to log in before they can add items to their shopping cart. So when creating a cart, 
+                     we are not going to send someone's user ID to get a cart back. So we send a POST request
+                     to this endpoint, and we get a cart object from the server.
+                     This cart object has a unique identifier that we are going to save on the client for
+                     subsequent requests. So when the user adds an item to their shopping cart, we are 
+                     going to send the cart ID back to the server. We will talk about that later. 
+    Addind an Item: We have the cart ID in the url, so we don't include it in request. 
+                    So we send this request and we get the item that was created. This item also has a 
+                    unique identifier that we will use for subsequent requests (in updating an item)
+  
+  So in total, we have 4 different endpoints: 2 for carts, and 2 for items.
+  We can implement the first two endpoints using a class called CartViewSet,
+  and for items endpoints a class called CartItemViewSet.
+  But before implementing these, first we need to revisit our data model.
+
+
+
+- Revisiting the Data model
+
+  First we need to address a couple of issues in our data model. Now look at our current Cart model.
+  As you know, Django automatically gives each model a primary key field, and the type of this field
+  is integer. There is a problem here: A hacker can easily guess someone else's cart ID, and send a 
+  request to this endpoint (/carts/:id) to mess with this cart. To solve this problem, we are going to
+  use a GUID (Globally Unique Identifier), which is a long 32 character string. So in our Cart model, we
+  need to redefine the primary key field:
+    
+    from uuid import uuid4
+
+    class Cart(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid4)
+    # notice that we shouldn't call uuid4 function by addind "()". If we do that it will create the same GUID
+    # for each cart. We just passed it here without "()".
+  
+  Then => python manage.py makemigrations  -  python manage.py migrate
+
+  in CartItem class, we add a related name for cart field:
+    
+    class CartItem(models.Model):
+        cart = models.ForeignKey(Cart, on_delete=models.CASCADE, related_name='items')
+    # So in our Cart model, we are going to have a field called 'items'. It is nicer than 'cartitem_set',
+    # which is the default related name.
+
+
+- Creating a Cart
+
+  Whenever we want to implement an API, first we built serializer, then view, and then route.
+
+  in serializers.py:
+
+    class CartSerializer(serializers.ModelSerializer):
+        id = serializers.UUIDField(read_only=True)
+        # We set this id field as read only, so we don't have to send it to the server.
+        # We are only going to read it from the server.
+        class Meta:
+            model = Cart
+            fields = ['id']
+  
+  in views.py:
+    	
+    We are not going to inherit from ModelViewSet, because this class provides all operations: list,
+    retrieve, create, update, and delete. But the operations we need to support for our carts are:
+    create, retrieve, and delete. We don't want a list operation. We also don't want an update operation,
+    because it doesn't really make sense to update a cart. We only update the quantity of a cart item, not
+    a cart.
+
+    So, instead of extending ModelViewSet, we want to create a custom ViewSet. Here is how to do that:
+
+        Let's look at the implementation of the ModelViewSet class:
+
+            class ModelViewSet(mixins.CreateModelMixin,
+                                mixins.RetrieveModelMixin,
+                                mixins.UpdateModelMixin,
+                                mixins.DestroyModelMixin,
+                                mixins.ListModelMixin,
+                                GenericViewSet):
+                    """
+                    A viewset that provides default `create()`, `retrieve()`, `update()`,
+                    `partial_update()`, `destroy()` and `list()` actions.
+                    """
+                    pass
+        
+        As you can see, there is nothing here. We just have a 'pass' keyword. 
+        This class is nothing but a combination of mixins and GenericViewSet.
+
+        Back to the view.py:
+
+            from rest_framework.mixins import CreateModelMixin
+            from rest_framework.viewsets import GenericViewSet
+
+            class CartViewSet(CreateModelMixin, GenericViewSet):
+                # we will add RetrieveModelMixin and DestroyModelMixin later.
+                queryset = Cart.objects.all()
+                serializer_class = CartSerializer
+        
+        in urls.py:
+
+            router.register('carts', views.CartViewSet)
+        
+        Now, let's test our implementation on the browser => http://127.0.0.1:8000/store/carts/
+            As you can see, when we posted it, we created a cart.
+        
+        Now, we are going to implement getting a cart.
+        But before that, as we haven't created CartItem view yet, we go to database and manually 
+        populate the cart item table with three cart items.
+
+        Now, when we add 'RetrieveModelMixin' in CartViewSet, and 'items' in as one of the fields in CartSerializer,
+        we see that item IDs are listed on browser via http://127.0.0.1:8000/store/carts/0fbf9bd821b54bd4899c8025f30be442/
+        (the id after 'carts/' in the url is the cart's id).
+        But we want to return the actual item objects, not just their ids. So here we need a serializer for cart items:
+
+        in serializers.py:
+
+            class CartItemSerializer(serializers.ModelSerializer):
+                class Meta:
+                    model = CartItem
+                    fields = ['id', 'product', 'quantity']
+        
+        As we need to use CartItemSerializer in our CartSerializer, we have to move the CartItemSerializer class before
+        the CartSerializer class. After that, in CartSerializer:
+
+            # we have to explicitly define the items fields and set it to CartItemSerializer:
+            items = CartItemSerializer(many=True)
+        
+        Now, we continue working on CartItemSerializer:
+
+            class CartItemSerializer(serializers.ModelSerializer):
+                # we redefine the product field. It currently shows the product id, we want it to show the product object
+                product = ProductSerializer()
+                class Meta:
+                    model = CartItem
+                    fields = ['id', 'product', 'quantity']
+
+        So if we look at the browser, we are now getting all the fields of product objects that we defined in 
+        ProductSerializer. What if we want to return only some of these fields. For this, we create another serializer 
+        for serializing product in a shopping cart item. So instead of using ProductSerializer, we can use this another 
+        serializer. For this purpose, we create a serializer called 'SimpleProductSerializer':
+
+            class SimpleProductSerializer(serializers.ModelSerializer):
+                class Meta:
+                    model = Product
+                    fields = ['id', 'title', 'unit_price']
+        
+        and use it in CartItemSerializer:
+            
+            product = SimpleProductSerializer()
+        
+        Now we want to add a field named 'total_price' for each item. So in CartItemSerializer:
+
+            class CartItemSerializer(serializers.ModelSerializer):
+                product = SimpleProductSerializer()
+                total_price = serializers.SerializerMethodField()
+
+                def get_total_price(self, cart_item: CartItem):
+                    return cart_item.quantity * cart_item.product.unit_price
+
+                class Meta:
+                    model = CartItem
+                    fields = ['id', 'product', 'quantity', 'total_price']
+        
+        We also need the total price our cart. So in CartSerializer:
+
+            class CartSerializer(serializers.ModelSerializer):
+                id = serializers.UUIDField(read_only=True)
+                items = CartItemSerializer(many=True)
+                total_price = serializers.SerializerMethodField()
+
+                def get_total_price(self, cart: Cart):
+                    return sum([item.quantity * item.product.unit_price for item in cart.items.all()])
+
+                class Meta:
+                    model = Cart
+                    fields = ['id', 'items', 'total_price']
+
+        Now, last one thing before finishing this lesson:
+
+            Open up the Django debug toolbar. Currently we have 13 queries to produce this result => 
+            http://127.0.0.1:8000/store/carts/0fbf9bd821b54bd4899c8025f30be442/
+
+            This is too many queries. (For each product, we have an extra query to read the attributes
+            of that product. This is where we need to user 'eager loading'. So when retrieving a cart, 
+            we want to eager load that cart with its items and products. We should do that in our
+            view set.)
+
+            Our current CartViewSet is as follows:
+
+                class CartViewSet(CreateModelMixin, RetrieveModelMixin, GenericViewSet):
+                    queryset = Cart.objects.all()
+                    serializer_class = CartSerializer
+            
+            We change it:
+
+                class CartViewSet(CreateModelMixin, RetrieveModelMixin, GenericViewSet):
+                    queryset = Cart.objects.prefetch_related('items__product').all()
+                    # we called prefetch_related because a cart can have multiple items, and that's why we used
+                    # the prefetch method.
+                    # On the other hand, for foreign keys where we have a single related object, instead of
+                    # prefetch_related, we use select_related.
+                    serializer_class = CartSerializer
+
+
+- Deleting a Cart
+  
+  For this, we add DestroyModelMixin to CartViewSet.
+
+
+- Getting Cart items
+  
+  When we go to the items endpoint of a specific cart => http://127.0.0.1:8000/store/carts/0fbf9bd821b54bd4899c8025f30be442/items
+  we want to see all items in this cart. The difference between this endpoint and the previous 
+  endpoint(http://127.0.0.1:8000/store/carts/0fbf9bd821b54bd4899c8025f30be442) is: In items endpoint, we don't have 
+  card specific properties. So we don't have the ID of the cart or the total_price of the cart. We only have an array of
+  cart items. If we add the cart item id to the url, we will retrieve that single cart item.
+
+  in views.py:
+    
+    class CartItemViewSet(ModelViewSet):
+        # we will support all operations, we didn't have to create a custom class. So we inherited from ModelViewSet
+
+        serializer_class = CartItemSerializer
+
+        # we don't want to retrieve all cart items. We want to filter them by cart id. So, instead of setting the
+        # queryset attribute, we will override the get_queryset method:
+        def get_queryset(self):
+            return CartItem.objects.filter(cart_id=self.kwargs['cart_pkd'])
+            # By writing "cart_id=self.kwargs['cart_pkd']", we got the cart id as a url parameter.
+  
+  in urls.py:
+    
+    Because we have nested resources, we need to use a nested router here, exactly like how we built products and
+    reviews before.
+
+        # we create the router
+        carts_router = routers.NestedDefaultRouter(router, 'carts', lookup='cart')
+        carts_router.register('items', views.CartItemViewSet, basename='cart-items')
+
+        # and we include the urls of the router in the urlpatterns list:
+    
+    Now, our endpoint works. But in the (http://127.0.0.1:8000/store/carts/0fbf9bd821b54bd4899c8025f30be442/items/)
+    endpoint, too many sql queries are made. Here we can use 'eager loading'. 
+    We rearrange the get_queryset method in CartItemViewSet:
+        
+        def get_queryset(self):
+            return CartItem.objects.filter(cart_id=self.kwargs['cart_pk']).select_related('product')
+
+
+- Adding a Cart Item
+  
+  For the reasons discussed at the beginning of the video (Adding a Cart Item), we are going to create another, 
+  new serializer for CartItem:
+
+    class AddCartItemSerializer(serializers.ModelSerializer):
+
+        class Meta:
+            model = CartItem
+            fields = ['id', 'product_id', 'quantity']
+  
+
+  In the CartItemViewSet, we don't want to hard code CartItemSerializer. We want to dynamically return a serializer class,
+  depending on the request method. For this, we are going to override the get_serializer_class method:
+
+    class CartItemViewSet(ModelViewSet):
+
+        def get_serializer_class(self):
+            if self.request.method == 'POST':
+                return AddCartItemSerializer
+            return CartItemSerializer
+  
+  We cannot see the product_id in the post box on the browser. Even though our CartItem model has a product_id 
+  attribute, this attribute is generated dynamically at runtime. It is not a field we can normally reference in 
+  the serializer. So we have to explicitly define this field: 
+
+      class AddCartItemSerializer(serializers.ModelSerializer):
+
+        # we add the following line:
+        product_id = serializers.IntegerField()
+
+        class Meta:
+            model = CartItem
+            fields = ['id', 'product_id', 'quantity']
+
+  Now implement the saving part. This one is a little tricky. Because when we add the same product to the same 
+  cart multiple times, we don't want to create multiple CartItem records; we want to update the quantity
+  of an existing item. So in the AddCartItemSerializer, we cannot rely on the default implementation of the 
+  save method that comes from the ModelSerializer. So we will override the save method:
+    
+    in AddCartItemSerializer:
+        
+
+
+
+
+        
+
+
+
+
+    
