@@ -1,0 +1,432 @@
+
+                            Django's authentication system for identifying users
+  - Topics:
+    How the authentication works?
+    User model and customizing it
+    Extending the User model
+    Creating profiles
+    Managing groups and permissions
+
+
+- Django Authentication System
+  
+  Every django application comes with a full-featured and flexible authentication system.
+  You can see its name among installed_apps:
+    django.contrib.auth
+  In this app, we have a bunch of models like user, group, permission. You can see the tables for these models in the database.
+
+  In settings.py, we have a section called Middleware. Middleware is a function that takes a request and either passes
+  that request to the next middleware or returns a response. As you know, in Django when we receive a request, that request,
+  at some point, is going to be passed to a view. During this time, Django is going to run that request through these 
+  Middleware functions in order. Each function can take the request and add something to it, or it can return a response.
+  If returns a response, the next middleware function is not executed. 
+  
+  We have a middleware called AuthenticationMiddleware. It reads the user information from the request and set the user
+  attribute on the request object.
+
+
+- Customizing the User Model
+
+  The user table in Django authentication system (we can see these table on the database) is pretty good but sometimes we need to
+  store additional data about the user. Here we have two options:
+    1- Using inheritance to extend the user model (AbstractUser class). So we can create another model called 'AppUser', 
+    and this model should extend the user model in django.
+    2- Creating a profile. We can create a Profile model. And in this model, we will add a one-to-one link to the User model.
+       In this scenario, we are not using inheritance; we are using composition. So the Profile model is composed of a User model.
+    
+    What are the practical differences and when should we which approach?
+        1- In terms of the database, with the first approach, we will end up extending the user table; so any extra attributes
+           that we add in our custom user model will end up in this table.
+        2- With the second approach, we are not going to extend this table; we will have a separate table and in that table, 
+           we will have a foreign key to the user table. 
+    
+    So practically speaking, we should use the first approach only for storing attributes related to authentication: Anything that 
+    impacts the authentication process. Anything extra that is not related to authentication should really go in a profile
+    table. Examples are the user's birthdate, addres, and so on. So with this approach, we allow each app to have a different
+    concept of a user's profile. For example, in the sales app, customer model represent the user's profile. Whereas in the 
+    hr app, the employee model represent the user's profile. And similarly in the training app, we can have a model called 
+    'Student', which is another user profile. So each app can have a different concept of a user's profile. Also take into account
+    that we cannot use the first approach in the middle of a project. It's a little bit tricy, and we will talk about it in the 
+    next lesson. So most of the time, we will use the second approach to customize the user model.
+
+
+- Extending the User Model
+
+  If you look at the user table on the database, you can see that we have a unique constraint on the username column. 
+  So we cannot have multiple users with the same username. But what about email? Currently there is no unique constraint
+  on the email column. So we can have multiple users with the same email. Imagine that in the future we want to allow our
+  users to log in with their emails. So here, we need to apply a unique constraint on the email column. And this is a valid
+  use case for extending the user model because we are changing something related to authentication. 
+  
+  So back to our project, we need to create a new user model. But where should we add that model? We don't want to add it 
+  in the store app because this app is for building an online store. It has nothing to do with authentication. What we are
+  trying to solve here is something very specific for this project.
+  
+  Now look at the store_custom app, We built this app in the first part of the course. And here, we combined features 
+  from different apps. So the code that we write here is very specific to this project. And this is the right place 
+  to add our new custom user model. But before doing so, we will change the name of this app to something more meaningful.
+  
+  We renamed this app to 'core'.
+  Then go to core.apps.py and change the name of the class (before it was StoreCustomConfig) and the value of the name attribute:
+    
+    class CoreConfig(AppConfig):
+        default_auto_field = 'django.db.models.BigAutoField'
+        name = 'core'
+
+  and in installed_apps change the name.
+
+  We need to create a new class called User and this should extend the AbstractUser in the authentication system.
+
+  In the core.models.py:
+    
+    from django.contrib.auth.models import AbstractUser
+    from django.db import models
+
+    # Create your models here.
+    class User(AbstractUser):
+        # we redefine the email field:
+        email = models.EmailField(unique=True)
+  
+
+  Now we need to tell Django we are going to use this class instead of the user class in the authentication system.
+  For that, in settings.py:
+    
+    # Here we need to define a new setting. We can add it anywhere in this file:
+
+        AUTH_USER_MODEL = 'core.User'
+  
+  Because we swapped out the built-in user model with our custom user model, we see an error on the terminal. (We previously
+  used the user model in likes.LikedItem)
+  So in LikedItem model in likes.models:
+    
+    There are two ways to solve this problem:
+        1- importing here our custom user model:
+        
+                from core.models import User
+        
+           But with this approach, the likes app is dependent on the user model in the core app. 
+           So it is no longer an independent reusable app. We can no longer distribute it without distributing the core app.
+           But the core app is not supposed to be reusable, it implements features very specific to this project. 
+           So we don't want to explicitly import this user class here. Instead:
+        
+        2- First, we import:
+
+                from django.conf import settings
+           
+           Then from this module, we pass the AUTH_USER_MODEL:
+
+                user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE) 
+    
+
+  python manage.py makemigrations
+  python manage.py migrate
+
+  Now we get a different error because we swapped out the user model in the middle of the project. So the first makemigration 
+  is dependent on the user model and we changed that user model to a different one. This is why we cannot easily extend and 
+  swap out the user model in the middle of a project. So as a best practice, you should always create a custom user model 
+  at the beginning of your project even if there is no requirement to change the authentication flow in the future. So you
+  can just create an empty class using the pass keyword, and this will ensure that, later on, if you want to replace this class, 
+  you are not going to have any problems:
+    For example, in core.models:
+        class User(AbstractUser):
+            pass
+  
+  But what can we do now? 
+  The only way we can solve this problem is by dropping and recreating our database. We don't want to do that. But in this case, 
+  we have no other choices. 
+
+  So in database:
+    DROP DATABASE storefront2;
+    CREATE DATABASE storefront2
+  
+  
+  python manage.py migrate
+
+  Everything works. But there are a couple of issues we need to fix in the admin panel.
+
+  But first: python manage.py createsuperuser
+
+  As we can see on http://127.0.0.1:8000/admin/
+  we no longer have Users page under the authentication app. 
+
+  So in the core.admin.py, we need to register the admin model for managing our users:
+        
+        from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
+        # because the name of the module we imported above is the same with the following UserAdmin class name, 
+        # we gave the above model an alias
+        
+        from .models import User
+
+        @admin.register(User)
+        class UserAdmin(BaseUserAdmin):
+            pass
+            # we don't want to customize it yet.
+
+  Now we can see Users under the core app on the admin panel. 
+
+  If we click on the add user button on the admin panel, we will see text fields for username and password.
+  But we also need to capture email here because we applied a unique constraint on the email field, and if we don't 
+  supply a value for the email, we will end up with an empty string in the database. And next time we create another user,
+  that user will also have a blank email, and we will get a duplicate record error.
+
+  So back to our UserAdmin:
+
+        @admin.register(User)
+        class UserAdmin(BaseUserAdmin):
+            pass
+    
+Let's click on the BaseUserAdmin and see its implementation:
+
+        In this class we have an attribute called add_fieldsets:
+
+            add_fieldsets = (
+                (
+                    None,
+                    {
+                        "classes": ("wide",),
+                        "fields": ("username", "password1", "password2"),
+                    },
+                ),
+            )
+        
+  These are the fields that we see when registering a new user. 
+  So let's copy this code and add it to our new admin model:
+
+        @admin.register(User)
+        class UserAdmin(BaseUserAdmin):
+            add_fieldsets = (
+                (
+                    None,
+                    {
+                        "classes": ("wide",),
+                        "fields": ("username", "password1", "password2", 'email', 'first_name', 'last_name'),
+                    },
+                ),
+            )
+        
+        # we added email. We also chose to add first_name and last_name even though that was not compulsory.
+  
+
+  By the way, if you look at the database, the user table is no longer a part of the auth app but the core app.
+
+  So to quickly recap:
+    To extend the user model:
+    first we create a new model that extends AbstractUser. 
+    Then, in the settings.py, we set off user model to our custom model (AUTH_USER_MODEL = 'core.User').
+    And from this point onward, we never reference the user model directly. Instead, we use settings.AUTH_USER_MODEL. 
+
+
+
+- Creating User profiles
+  
+  This is our current Customer model in store.models:
+
+        class Customer(models.Model):
+            .
+            .
+            first_name = models.CharField(max_length=255)
+            last_name = models.CharField(max_length=255)
+            email = models.EmailField(unique=True)
+            phone = models.CharField(max_length=255)
+            birth_date = models.DateField(null=True, blank=True)
+            membership = models.CharField(
+                max_length=1, choices=MEMBERSHIP_CHOICES, default=MEMBERSHIP_BRONZE)
+
+            .
+            .
+
+  This Customer model is essentially the profile of a user in the sales app. 
+  The only thing that is missing is the link for the user model.
+  So here let's define a new field called user:
+
+        from django.conf import settings
+
+        class Customer(models.Model):
+            .
+            .
+            first_name = models.CharField(max_length=255)
+            last_name = models.CharField(max_length=255)
+            email = models.EmailField(unique=True)
+            phone = models.CharField(max_length=255)
+            birth_date = models.DateField(null=True, blank=True)
+            membership = models.CharField(
+                max_length=1, choices=MEMBERSHIP_CHOICES, default=MEMBERSHIP_BRONZE)
+            user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+
+            def __str__(self):
+                return f'{self.first_name} {self.last_name}'
+
+            class Meta:
+                ordering = ['first_name', 'last_name']
+        
+        # In this model, we have a bunch of redundant fields. The fields first_name, last_name, and email already present
+        # in the user model. So we need to delete them from here:
+         
+        class Customer(models.Model):
+            .
+            .
+            phone = models.CharField(max_length=255)
+            birth_date = models.DateField(null=True, blank=True)
+            membership = models.CharField(
+                max_length=1, choices=MEMBERSHIP_CHOICES, default=MEMBERSHIP_BRONZE)
+            user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+
+            def __str__(self):
+                return f'{self.first_name} {self.last_name}'
+
+            class Meta:
+                ordering = ['first_name', 'last_name']
+        
+        # Now we need to make a few more changes. Because we removed the first_name and last_name, we need to reference 
+        # the user object in the __str__ method:
+
+        def __str__(self):
+                return f'{self.user.first_name} {self.user.last_name}'
+        
+        # also, we need to change how we pass these fields in the ordering attribute:
+
+        class Meta:
+                ordering = ['user__first_name', 'user__last_name']
+
+  Now, in the terminal we have a bunch of errors in the CustomerAdmin model. 
+  
+  So, in CustomerAdmin model in store.admin.py:
+    
+        Also here, we need to reference the user field:
+
+            ordering = ['user__first_name', 'user__last_name']
+        
+        For this reason, when loading the customers, we want to eager load them with our users. 
+        Otherwise, for each customer, a separate query is going to be sent to the database.
+        So before the ordering attribute:
+
+            list_select_related = ['user']
+            ordering = ['user__first_name', 'user__last_name']
+        
+  There is also a warning for list_display in CustomerAdmin model. Current list_display is:
+
+        list_display = ['first_name', 'last_name',  'membership', 'orders']
+
+  But in this case, we cannot use the user field. This syntax is not supported at the time of this lesson.
+  So the workaround is to define a method called first_name in the Customer model, and in that method we 
+  will return user.first_name:
+    
+    In Customer model in store.models.py:
+
+        def first_name(self):
+            return self.user.first_name
+        
+        def last_name(self):
+            return self.user.last_name
+
+  
+  We have no more errors on the terminal.
+
+  python manage.py makemigrations
+  
+  Now we get a warning about a non-nullable field. We are trying to add a new column to the store_customer table in the database,
+  and this column doesn't accept null values. So what's gong to happen to existing customers? This is the warning.
+  Here we have two choices:
+    1- We can provide a one-off default value
+    2- or quite, and add the default value in our model. But we don't want to hardcode that default value in our model, 
+       because otherwise, every time we create a new customer, that customer will be associated with a specific user.
+       We don't want to happen. 
+  
+  So here we select the first option, and supply a one-off default value.
+  We used 1 (the id of the admin user) as the default value.
+
+  python manage.py migrate
+        
+  If you look at the customer table in the database, now we have the user_id, which is a foreign key to the user table.
+  Also, first_name, last_name, and email columns are removed from this table. 
+
+  Now, if you look at customer page on the admin site, when creating a customer, we can associate a customer 
+  with an existing user. In a real world scenario, we want to replace this drop-down list with an autocomplete box. 
+  But we can leave it now. Now let's associate it with the user 'john' that we created earlier and create a customer. 
+  In Customers page, we can see the first_name and last_name of this customer coming from the associated user model. 
+  But we cannot sort this table with first name and last name. To fix this problem:
+    
+    in Customer model in store.models.py:
+
+        from django.contrib import admin
+
+        @admin.display(ordering='user__first_name')
+        def first_name(self):
+            return self.user.first_name
+
+        @admin.display(ordering='user__last_name')
+        def last_name(self):
+            return self.user.last_name
+
+
+  So to quickly recap:
+  To define a user profile, 
+    we simply create a profile model (in our case, Customer model),
+    and in the profile model, we add a OneToOneField to the user model, or more accurately with AUTH_USER_MODEL of the containing project.
+
+
+
+- Groups and Permissions
+  
+  A group is a collection of permissions.
+  So instead of assigning users a bunch of permissions on specific occasions, we can add them to one or more groups,
+  and each group can contain a bunch of permissions. 
+  So in this application, currently, we don't have any groups. 
+  So let's add a new group called 'Customer Service':
+
+    in the admin site in this link => http://127.0.0.1:8000/admin/auth/group/add/
+    We will create a group called 'Customer Service'
+    In the permissions box, we can see all permissions available in our application. So let's filter them by customer.
+    As we can see, we have these permissions for the customer model in the store app. 
+    So every time we create a model and migrate our database, Django automatically creates those permissions for use. 
+    They are stored in the auth_permission table in our database.  
+
+    In this auth_permission table, we can also see a field called 'content_type_id'. In the database, we have a table called
+    'django_content_type', which specifies all models in our application. So the 'content_type_id' in auth_permission table
+    shows which model a permission is associated with.
+
+    So back to the admin site.
+    Let's select all permissions related with customer model and order model and them to the permissions of the customer
+    'john' and save.
+
+    Go to john's page and mark him as a staff member so he can log into the admin area.
+    Below select Customer Servise as chosen groups and save.
+    Now log in as john.
+    Now, as you can see, john logged into the admin panel but he can only manage customers and orders.
+    So this is how groups and permissions work.
+
+
+- Creating Custom Permissions
+  
+  Why do we need to create custom permissions?
+  Sometimes we have operations that are not quite about creating, updating, or deleting data. 
+  For example, think of canceling an order. It is a special kind of update. So by canceling an order, 
+  we don't want to delete it, we want to change the status to 'cancelled'. Let's say we want to give some users 
+  the ability to cancel an order but not update it. This is where we need custom permissions:
+    
+    in the Order class in store.models.py:
+
+        class Meta:
+            permissions = [
+                # each tuple represents a permission
+                # in each tuple, the first one is the code name, the other is description
+                ('cancel_order', 'Can cancel order')
+            ]
+
+python manage.py makemigrations
+python manage.py migrate
+
+If we look at the auth_permission table in the database, we can see our custom permission at the last record.
+Now, on the admin site, we can give someone this permission.
+
+In the next section, we are going to apply these permissions to our API endpoints to make them secure.
+
+    
+  
+
+
+
+  
+
+    
+    

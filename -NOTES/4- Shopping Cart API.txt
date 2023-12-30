@@ -319,8 +319,105 @@ In this section, we are going to put everything together and build a shopping ca
     
     in AddCartItemSerializer:
         
+        class AddCartItemSerializer(serializers.ModelSerializer):
+            product_id = serializers.IntegerField()
+
+            # Earlier we talked about data validation in serializers. So we can either validate the entire object that
+            # is passed here, or individual fields. To validate individual fields, We define a method called validate_field-name:
+            def validate_product_id(self, value):
+                if not Product.objects.filter(pk=value).exists():
+                    raise serializers.ValidationError(
+                        'No product with the given ID was found.')
+                return value
+            # we don't have to write a code for the validation of quantity, because we managed that in models.py 
+            # for this field. There we said that quantity field is PositiveSmallIntegerField, which rejects negative values,
+            # and we set => validators=[MinValueValidator(1)], which means that the value should be at least 1.
+
+            def save(self, **kwargs):
+                # here we need to get the product_id and quantity. Where do we get them?
+                # As told earlier: Behind the scene, there is a call to 'serializer.is_valid()'.
+                # When the data gets validated, then we get it from an attribute called 'validated_data',
+                # which is a dictionary.
+                product_id = self.validated_data['product_id']
+                quantity = self.validated_data['quantity']
+                # What about the cart id? Cart id is available in the url.
+                # But in the serializer, we don't have access to url parameters.
+                # So we have to go to CartItemViewSet, get the url parameter, and using a context object, pass it 
+                # to the serializer. We did that by overriding the get_serializer_context method in CartItemViewSet.
+                # Now, we can read the cart_id:
+                cart_id = self.context['cart_id']
+
+                # now, the saving logic:
+                try:
+                    cart_item = CartItem.objects.get(
+                        cart_id=cart_id, product_id=product_id)
+                    cart_item.quantity += quantity
+                    cart_item.save()
+                    self.instance = cart_item
+                except CartItem.DoesNotExist:
+                    self.instance = CartItem.objects.create(
+                        cart_id=cart_id, **self.validated_data)
+                return self.instance
+                # If you inspect the save method in ModelSerializer, you can see that a self.instance attributed are created
+                # when we update or create an object, and then this attribute is returned. We have to follow the same pattern.
+                # So all the building blocks of drf can talk each other properly. This is the explanation of the 'self.instance'
+                # attribute in our above code.
+
+                # Now let's test our implementation:
+                # create a new cart in => http://127.0.0.1:8000/store/carts/
+                # go to items of this cart => http://127.0.0.1:8000/store/carts/here_paste_the_cart_id/items/
+                # create a cart item by setting product_id and quantity, and post it
+                # post a cart item again with the same product_id and with a quantity
+                # As you can see, a new cart item is not created, but our existing cart item is updated.
+                # So our code works.
+                # We tested our code with a valid value. If we test it with  invalid value (for example, if we 
+                # say product_id=0 (there is no product with id=0)), 
+                
+
+            class Meta:
+                model = CartItem
+                fields = ['id', 'product_id', 'quantity']
 
 
+- Updating a Cart Item
+
+  Let's go to a particular item in a particular cart:
+    http://127.0.0.1:8000/store/carts/0fbf9bd821b54bd4899c8025f30be442/items/1/
+  At the moment, when we go to the post box in the above link, we can see the entire item object (all the information
+  of the products, etc.). We don't want to see it here because we only want the quantity to be updated. So only the 
+  quantity should be seen and posted there. 
+
+  For this, we create another serializer:
+
+    class UpdateCartItemSerializer(serializers.ModelSerializer):
+        class Meta:
+            model = CartItem
+            fields = ['quantity']
+
+  
+  and in CartItemViewSet, we add:
+    
+    elif self.request.method == 'PATCH':
+            return UpdateCartItemSerializer
+  
+  We are not going to allow PUT requests here, because we only want to update a single property (quantity)
+  of a cart item object. But how can we prevent PUT requests? 
+  We have an attribute called 'http_method_names'. We can set it to the list of methods that we allow at 
+  this endpoint:
+    
+    http_method_names = ['get', 'post', 'patch', 'delete']
+    # method names here should be written in lowercase.
+  
+  When we go to => http://127.0.0.1:8000/store/carts/0fbf9bd821b54bd4899c8025f30be442/items/1/
+  we see that the PUT button has disappeared, and when we enter a quantity and patch it, we will see that the quantity
+  gets updated to the value we entered.
+  
+
+  - Deleting a Cart Item
+
+    This functionality is already implemented for us, because our CartItemViewSet extends the ModelViewSet class, 
+    and as we have already learned, this class provides all operations, and also we have already added the delete
+    method in http_method_names.
 
 
         

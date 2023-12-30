@@ -1,0 +1,29 @@
+
+    
+How to secure API endpoints using permission.
+
+Topics:
+    Token-based authentication
+    Adding authentication endpoints
+    Registering, logging in,logging out, etc
+    Applying permissions
+
+
+
+- Token-based Authentication
+  
+  Token-based authentication is de facto standart for authenticating users with RESTful APIs.
+
+
+
+- Adding the Authentication Endpoints
+
+  Django comes with a full-fledged authentication system. 
+  But this system doesn't include an API layer. So we don't have any endpoints for users to register,
+  login, so on. We only have a bunch of models and database tables. 
+  We can build this API layer by hand. But that's pretty tedious and repetitive.
+  We don't want to repeat it in every project.
+  So this is where we use a fantastic library called 'Djoser'. Djoser is the RESTful implementation 
+  of Django authentication system. It provides a bunch of views for user registration, login, logout,
+  password reset, and so on. 
+
