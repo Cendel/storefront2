@@ -23,7 +23,863 @@ Topics:
   login, so on. We only have a bunch of models and database tables. 
   We can build this API layer by hand. But that's pretty tedious and repetitive.
   We don't want to repeat it in every project.
+  
   So this is where we use a fantastic library called 'Djoser'. Djoser is the RESTful implementation 
   of Django authentication system. It provides a bunch of views for user registration, login, logout,
   password reset, and so on. 
+  Now go to documentation => https://djoser.readthedocs.io/en/latest/  and hit 'Getting started'
+  On this page, we can see all endpoints that Djoser is going to add to our backend. 
+  Now go to the installation page. (Because settings and instructions of libraries may be changed, always check the documentation.)
 
+  pipenv install djoser
+
+  There are two more libraries (simplejwt and social-auth-app-django) here to install but we will get back here later.
+
+  add djoser to installed_apps
+
+  register the url pattern in front.urls.py:
+
+        path('auth/', include('djoser.urls')),
+  
+  djoser relies on an authentication backend, or an authentication engine to do the actual authentication.
+  Because djoser is just an API layer: a bunch of views, serializers, and routes.
+  So we need an authentication engine to do the actual work.
+  The actual authentication process will be executed by this engine, not by Djoser itself.
+
+  And here we have two choices:
+    1- We can use Token-based Authentication which is built in DRF.
+    2- We can use JSON Web Token Authentication which is implemented in a separate library.
+  
+  What is the difference?
+
+  1- Token-based Authentication which is built in DRF uses a database table to store tokens. So every time we receive
+     a request on the server, to validate the token, this backend is going to go to the database to make sure 
+     this is a valid token. So that's going to incur a database call for every request. 
+  
+  2- In contrast, JSON Web token Authentication doesn't need a database. The way these tokens are structured
+     completely eliminates a database call because every token has a digital signature. And on the server we 
+     can use that signature to ensure this is a valid token. 
+
+  So back to the documentation, let's go to the Authentication Backends page and => JSON Web Token Authentication
+
+  To use this backend, first we need to install a separate library which we saw on the installation page earlier:
+
+        pipenv install djangorestframework_simplejwt
+        # jwt is short for JSON Web Token
+  
+  Now as you can see on JSON Web Token Authentication page, we add the following to the REST_FRAMEWORK attribute in settings.py:
+
+        'DEFAULT_AUTHENTICATION_CLASSES': (
+            'rest_framework_simplejwt.authentication.JWTAuthentication',
+        ),
+
+            # So we are using the JWTAuthentication class as our authentication engine.
+  Next, we need to add a setting that is specific to the simplejwt library that we have just installed. In settings.py:
+
+        SIMPLE_JWT = {
+            'AUTH_HEADER_TYPES': ('JWT',),
+        }
+        
+        # with this setting, we are spicifying the prefix that should be included in the request header. So for sending
+        # the authentication token to the server, we are going to prefix the token with JWT.
+  
+  There is one more step. As you can see on the documentation, we need to include one more url pattern in the storefront.urls.py:
+
+        path('auth/', include('djoser.urls.jwt')),
+        
+        
+  So, under documentation,in Getting started page, you can see the endpoints djoser adds. But all these endpoints are prefixed
+  with 'auth'. 
+  So back to our project, let go to => http://127.0.0.1:8000/auth/users/
+  This endpoint is working but currently we cannot access it. Because we get 401 error, which means unauthorized. 
+  Because this is a protected endpoint. It is not open to anonymous users.
+  So to access this endpoint, we need to pass a JSON Web Token in the request header. We will do that soon.
+
+  So we have completed setting up our authentication endpoints.
+
+
+
+  - Registering Users
+
+    Now go to => http://127.0.0.1:8000/auth/users/  and register a user:
+
+            {
+                "email": "user1@email.com",
+                "username": "user1",
+                "password": "1234"
+            }
+    
+    We recieve the following response:
+
+            {
+                "password": [
+                    "This password is too short. It must contain at least 8 characters.",
+                    "This password is too common.",
+                    "This password is entirely numeric."
+                ]
+            }
+
+    
+    Where does this response come from?
+    In settings.py, we have the following setting:
+
+            AUTH_PASSWORD_VALIDATORS = [
+                {
+                    'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
+                },
+                {
+                    'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
+                },
+                {
+                    'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
+                },
+                {
+                    'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
+                },
+            ]
+    
+    So these are various validators available to use, and we can always customize them. 
+    Now let's register again:
+
+            {
+                "email": "user1@email.com",
+                "username": "user1",
+                "password": "Password.123"
+            }
+    
+    So we have the following new user:
+
+            {
+                "email": "user1@email.com",
+                "username": "user1",
+                "id": 3
+            }
+    
+    But what about the first and last names? What if you want to capture them as part of the 
+    registration?
+    Djoser has a serializer for deserializing this data. 
+    So if we want to capture additional fields, we need a custom serializer.
+
+    So let's go to Djoser's documentation and on the settings page. Here we have a dictionary of
+    various serializers used in Djoser:
+
+            {
+                'activation': 'djoser.serializers.ActivationSerializer',
+                'password_reset': 'djoser.serializers.SendEmailResetSerializer',
+                'password_reset_confirm': 'djoser.serializers.PasswordResetConfirmSerializer',
+                'password_reset_confirm_retype': 'djoser.serializers.PasswordResetConfirmRetypeSerializer',
+                'set_password': 'djoser.serializers.SetPasswordSerializer',
+                'set_password_retype': 'djoser.serializers.SetPasswordRetypeSerializer',
+                'set_username': 'djoser.serializers.SetUsernameSerializer',
+                'set_username_retype': 'djoser.serializers.SetUsernameRetypeSerializer',
+                'username_reset': 'djoser.serializers.SendEmailResetSerializer',
+                'username_reset_confirm': 'djoser.serializers.UsernameResetConfirmSerializer',
+                'username_reset_confirm_retype': 'djoser.serializers.UsernameResetConfirmRetypeSerializer',
+                'user_create': 'djoser.serializers.UserCreateSerializer',
+                'user_create_password_retype': 'djoser.serializers.UserCreatePasswordRetypeSerializer',
+                'user_delete': 'djoser.serializers.UserDeleteSerializer',
+                'user': 'djoser.serializers.UserSerializer',
+                'current_user': 'djoser.serializers.UserSerializer',
+                'token': 'djoser.serializers.TokenSerializer',
+                'token_create': 'djoser.serializers.TokenCreateSerializer',
+            }
+    
+    For example, for creating a user, here is the default serializer:
+
+            'user_create': 'djoser.serializers.UserCreateSerializer'
+    
+    
+    By using the settings module, we can easily replace this with a custom serializer.
+    Where are we going to add this custom serializer?
+    We don't want to add it in the store app for the same reason that we didn't want to customize the user model 
+    in this app. Because this requirement is very specific to this project.
+    So we are going to add this in the core app.
+
+    Create a new file called 'serializers.py' in the core app:
+
+            from djoser.serializers import UserCreateSerializer as BaseUserCreateSerializer
+            # because we have a name clash between the above module and the following custom class that we want to create,
+            # we gave the above module an alias
+
+
+            class UserCreateSerializer(BaseUserCreateSerializer):
+                # this custom serializer extends the serializer we imported above
+                # So we will get all its functionality, and add something to it
+
+                # We will create a Meta class, but also want this Meta class inherit everything in the Meta class of BaseUserCreateSerializer
+                class Meta(BaseUserCreateSerializer.Meta):
+                    # the only thing we want to overwrite is the fields attribute. So:
+                    fields = ['id', 'username', 'password',
+                            'email', 'first_name', 'last_name']
+
+
+    So now we have a serializer, we need to register it in the settings module. Add the following in settings.py:
+
+            DJOSER = {
+                'SERIALIZERS': {
+                    'user_create': 'core.serializers.UserCreateSerializer'
+                }
+            }
+
+    Now test our implementation. Go to => http://127.0.0.1:8000/auth/users/
+    Now we have all the fields we defined. Let's create another user:
+
+            {
+                "username": "user2",
+                "password": "Password.123",
+                "email": "user2@email.com",
+                "first_name": "Joe",
+                "last_name": "Smith"
+            }
+    
+    Now, back to the serializer. What if we want to include some profile data here as well. For example, birth_date.
+    This is possible but this is not the right way to implement this. Because this serializer is purely responsible 
+    for deserializing user data and creating a user record. Nothing more.
+    birth_date is, on the other hand, not a part of the user table. It is the part of the profile table, or the customer table. 
+    
+    Each component should have a single responsibility. 
+
+    So what should we do here?
+
+    We are not saying that we shouldn't capture user's birth date on the registration form. 
+    On the frontend, let's say we have a registration form, and that form might include several fields.
+    Some of these fields belong to the user model, the others belong to the profile model, like the Customer model.
+    To save all these fields, the client should first send a request to the users endpoint to create a user account.
+    And then it should send a separate request to the profile endpoint to store those additional profile-related fields.
+
+    Yes, we are going to have two separate calls to the server but our endpoints are properly separated. 
+    And when we properly separate these endpoints, they become more reusable and easier to maintain. 
+    We don't want these endpoints to step on each other's toes. 
+
+    So, again:
+
+    Each component should have a single responsibility. 
+
+
+
+- Building the Profile API
+  
+  Look at the endpoints provided by djoser:
+
+        /users/
+        /users/me/
+        /users/confirm/
+        /users/resend_activation/
+        /users/set_password/
+        /users/reset_password/
+        /users/reset_password_confirm/
+        /users/set_username/
+        /users/reset_username/
+        /users/reset_username_confirm/
+        /token/login/ (Token Based Authentication)
+        /token/logout/ (Token Based Authentication)
+        /jwt/create/ (JSON Web Token Authentication)
+        /jwt/refresh/ (JSON Web Token Authentication)
+        /jwt/verify/ (JSON Web Token Authentication)
+  
+  As you can see, all these endpoints are for managing users and authentication (the last five).
+  So djoser doesn't have any endpoints for user profiles, and that makes perfect sense. Because profiles are specific to apps. 
+
+  So we need to build the customer api, or the profile api ourselves.
+
+  Where should we implement this API?
+  In the store app. Because this is where we have defined the concept of a customer. Do the API belongs to this app as well.
+
+  So, in the store app, we start with a serializer. in store.serializers.py, we define a new serializer:
+
+        class CustomerSerializer(serializers.ModelSerializer):
+            # Even though we have user attribute in the customer model, the user_id attribute is created dynamically at runtime.
+            # So we need to explicitly define it here:
+            user_id = serializers.IntegerField(read_only=True)
+
+            class Meta:
+                model = Customer
+                fields = ['id', 'user_id', 'phone', 'birth_date', 'membership' ]
+
+  Our serializer is ready. Now we create a view set. In store.views.py:
+
+        class CustomerViewSet(CreateModelMixin, RetrieveModelMixin, UpdateModelMixin, GenericViewSet):
+            # ModelViewSet is not a good choice here because we don't want to support all operations at this endpoint.
+            # For example, we don't want to list customers. That is something we only need on the admin panel. Our frontend
+            # app doesn't require it. Our required operations here are: create, retrieve, update.
+            # Also we don't want to delete a customer. Because when we delete a user, the customer record gets deleted automatically.
+            # Because of that we didn't extend ModelViewSet here, and we created a custom view set.
+
+            queryset = Customer.objects.all()
+            serializer_class = CustomerSerializer
+  
+  And finally, we register the route. In store.urls.py:
+
+        router.register('customers', views.CustomerViewSet)
+
+  Now, go to the store app on the browser => http://127.0.0.1:8000/store/
+  Here we have a new endpoint for managing customers.
+  Let's create a profile for one of our users. Here we create a profile for the user with the id 4:
+
+        {
+            "user_id": 4,
+            "phone": "1234",
+            "birth_date": "2000-01-01",
+            "membership": "B"
+        }
+  
+  Now we have a customer record for this user:
+
+        {
+            "id": 3,
+            "user_id": 4,
+            "phone": "1234",
+            "birth_date": "2000-01-01",
+            "membership": "B"
+        }
+  
+  So our customer or profile API is ready.
+  Now we are going to learn about authentication users.
+
+
+- Logging In
+  
+  Once again on this page => https://djoser.readthedocs.io/en/latest/getting_started.html
+  you can see we have a bunch of endpoints for authenticating users:
+
+        /users/
+        /users/me/
+        /users/confirm/
+        /users/resend_activation/
+        /users/set_password/
+        /users/reset_password/
+        /users/reset_password_confirm/
+        /users/set_username/
+        /users/reset_username/
+        /users/reset_username_confirm/
+        /token/login/ (Token Based Authentication)
+        /token/logout/ (Token Based Authentication)
+        /jwt/create/ (JSON Web Token Authentication)
+        /jwt/refresh/ (JSON Web Token Authentication)
+        /jwt/verify/ (JSON Web Token Authentication)
+  
+  So we have the following two endpoints, or Token Based Authentication that comes with DRF:
+
+        /token/login/ (Token Based Authentication)
+        /token/logout/ (Token Based Authentication)
+  
+  and three more endpoints, or JSON Web Token authentication:
+
+        /jwt/create/ (JSON Web Token Authentication)
+        /jwt/refresh/ (JSON Web Token Authentication)
+        /jwt/verify/ (JSON Web Token Authentication)
+
+  As we pointed out earlier, the difference between these two authentication backends is that:
+  
+  With Token Based Authentication, validating a token requires a database call.
+
+  Whereas with JSON Web Token Authentication, we don't need an extra database call.
+
+  So we are going to go to /jwt/create/  to create a new token. And this is essentially the login endpoint.
+  So on the browser, let's go to => http://127.0.0.1:8000/auth/jwt/create/
+  and in the post box pass a username and password for a user:
+
+        {
+            "username": "user2",
+            "password": "Password.123"
+        }
+  
+  Now we get two tokens. We have an access token, and a refresh token. 
+  An access token is a short-lived token that we use for calling secure API endpoints. 
+  But when this expires, we use a refresh token to get a new access token. 
+  By default, the refresh token is valid for one day, whereas the access token is valid for five minutes.
+  But we can easily overwrite these settings.
+
+  Let's go to the documentation of our authentication backend (simplejwt):
+    https://django-rest-framework-simplejwt.readthedocs.io/en/latest/
+    
+    if we click on the 'settings':
+        We can see here how these token lifetimes are set:
+
+            .
+            .
+            SIMPLE_JWT = {
+                "ACCESS_TOKEN_LIFETIME": timedelta(minutes=5),
+                "REFRESH_TOKEN_LIFETIME": timedelta(days=1),
+                "ROTATE_REFRESH_TOKENS": False,
+                "BLACKLIST_AFTER_ROTATION": False,
+                "UPDATE_LAST_LOGIN": False,
+            .
+            .
+  
+  These default values are pretty good.
+  But because we don't want our token to expire in the middle of our lessons, we will change the lifetime of
+  the access token from five minutes to one day.
+
+  So will copy the following line:
+    
+            SIMPLE_JWT = {
+                "ACCESS_TOKEN_LIFETIME": timedelta(minutes=5),
+  
+  and in settings.py, we added it to the SIMPLE_JWT attribute:
+
+            from datetime import timedelta
+            # (we need to import the timedelta function)
+
+            SIMPLE_JWT = {
+                'AUTH_HEADER_TYPES': ('JWT',),
+                "ACCESS_TOKEN_LIFETIME": timedelta(days=1)}
+  
+  So we are going to log in again, and copy the token, so we can reuse it in future lessons.
+
+  So this is how we allow users to log in. 
+  But what about logging out?
+  To log out the user, all we have to do is remove the tokens from the client, nothing else.
+  So there is no endpoints we call to log the user out, because these tokens are not stored in the database,
+  and that's why we are using JSON web tokens. More about this is in the next lesson.
+
+
+- Inspecting a JSON web token
+
+  Let's demystify JSON Web Tokens.
+
+  Go to => https://jwt.io/
+  This is the official website for JSON Web Tokens. 
+  JWT has many libraries
+
+  Click on 'Debugger':
+    Here we can paste a JSON web token and see decoded on the right side. 
+    
+    Header:
+        The header is actually an JSON object. That is why we call these tokens JSON web tokens.
+        Because this token is essentially a JSON object that is encoded in some way. 
+        'alg' stands for 'algorithm'.
+    
+    Payload:
+        Once again here we have a JSON object with four properties. 
+        As you can see, here we have user_id. Where does that come from?
+        When we log in, our authentication backend, or our authentication engine, validates our credentials.
+        If they are valid, it is going to retrieve our user account, and then it will grab our user id, and
+        puts it in the JSON web token. 
+    
+    Verify Signature:
+        This is the most important part of the token. 
+        Here you can see the formula for generating the signature. 
+        It graps the header and the payload, and using a secret key, it generates a digital signature. 
+        So a hacker cannot generate a signature for our server unless he has access to the server, 
+        where we have a secret key for generating signatures. Otherwise, whatever changes a hacker applies 
+        to the signature becomes invalid because our system knows that this signature is not generated
+        based on the secret key in our system.
+  
+  So this is how JSON web tokens work.
+
+
+- Refreshing Tokens
+  
+  If the client needs to access a protected API endpoint, it needs to send the access token to the server in the 
+  request header. If the token gets expired, the server is going to respond with a 401 (Unauthorized) error. 
+  So at this point, the client needs to call the refresh endpoint using the refresh token to get a new access token.
+ 
+  So back to the list of endpoints. We have an endpoint for refreshing JSON web tokens:
+    
+        /jwt/refresh/
+
+  Let's see how that works. Go to  => http://127.0.0.1:8000/auth/jwt/refresh:
+    In the post box, we have to add our refresh token. 
+    Now we got a new access token.
+
+- Getting the Current User's Profile
+
+  As you can see in the list of endpoints, we have an endpoint for getting the current user:
+
+        /users/me/
+
+  So go to => http://127.0.0.1:8000/auth/users/me/
+  As you can see, we get a 401 error because we haven't supplied our authentication credentials. We needed to pass 
+  our access token.
+  For that we are going to user a Chrome extension called 'ModHeader'. 
+  We added it to chrome from chrome web store.
+  On this ModHeader extension, we add a new request header. 
+  We pass 'Authorization' as the name, and 'JWT our_access_token' as the value.
+  
+  Note: Once you are done with studying, make sure to remove the Authorization header here, because
+  otherwise, this extension will send this header to every website you visit. And this can totally screw
+  the authentication process on other websites that use JSON web tokens.
+
+  Now go to again => http://127.0.0.1:8000/auth/users/me/
+  As you can see, now we can access this protected endpoint.
+
+  We can see our email, id, and username.
+  We also want to include here the first name and the last name as well. 
+  To do that we need a custom serializer. Here we repeated exactly the same steps in the section 
+  'Registering Users', where we created a custom serializer for registering users:
+
+  Here is the default serializer for getting the current user:
+
+            'current_user': 'djoser.serializers.UserSerializer',
+    
+  In core.serializers.py:
+
+            from djoser.serializers import UserSerializer as BaseUserSerializer
+
+
+            class UserSerializer(BaseUserSerializer):
+
+                class Meta(BaseUserSerializer.Meta):
+                    fields = ['id', 'username', 'email', 'first_name', 'last_name']
+
+
+    So now we have a serializer, we need to register it in the settings module. Add the following in settings.py:
+
+            DJOSER = {
+                'SERIALIZERS': {
+                    'user_create': 'core.serializers.UserCreateSerializer',
+                    'current_user': 'core.serializers.UserSerializer',
+                }
+            }
+
+    Now test our implementation. Go to => http://127.0.0.1:8000/auth/users/me/
+    
+
+
+- Getting Current User's Profile
+  
+  Let's learn how to get and update current user's profile. 
+  So we want to add the following endpoint which will get us current user's profile.
+        http://127.0.0.1:8000/store/customers/me/
+ 
+  
+  in CustomerViewSet in store.views.py:
+
+        class CustomerViewSet(CreateModelMixin, RetrieveModelMixin, UpdateModelMixin, GenericViewSet):
+            queryset = Customer.objects.all()
+            serializer_class = CustomerSerializer
+
+            # we will define a new method called 'me'
+            # this method is more accurately called an 'action'. So all the methods we hare in this view set or responding to requests
+            # are called 'action'. So we have the 'create' method that we inherit from CreateModelMixin, we also have the 'retrieve'
+            # method that we inherit from the RetrieveModelMixin, and so on. All these methods are called actions. So in this case,
+            # we are defining a custom action, and we need to decorate it with the 'action' decorator in rest framework.
+            # so on the top, we import => from rest_framework.decorators import action
+            # In the decorator, we need to set the detail argument. If we set it to 'false', that means this action is
+            # available on the ListView. So it will be available here=> http://127.0.0.1:8000/store/customers/me/
+            # because 'customers' is a list.
+            # If we set it to 'true', the action is going to be available on the detail view. So we will go to a specific customer
+            # and then access this endpoint => http://127.0.0.1:8000/store/customers/1/me/
+            # In this case, we want the action to be available on the list, so we set the detail to 'false'.
+            # Here we can also set an argument 'methods' which list the allowed methods.
+            @action(detail=False, methods=['GET', 'PUT'])
+            def me(self, request):
+                # As we said earlier, a JSON web token contains a user id in his payload. How can we get that?
+                # As you know from the settings module, we have an authentication middleware (AuthenticationMiddleware).
+                # The job of this middleware is to inspect the incoming request, and if there is information about the user,
+                # it is going to retrieve that user from the database and attach it to the request object.
+                # So every request has a user attribute. If the user is not logged in, this is going to be set to an
+                # instance of the anonymous user class. Otherwise, this is going to be a user object.
+                # So here we will get the user id from the request object, and then can easily retrieve the customer
+                # with this user id and return it to the client.
+
+                # the user may not have a customer record. Taking this possibility into account, we don't use 'get'
+                # in the following. Instead we use 'get_or_create'. With this, we won't end up with an exception.
+                # One thing to note here is: The get_or_create method doesn't return a customer object;
+                # it returns a tuple with two values. The first value is a customer object, and the second value is
+                # a boolean that tells us if this object was created or not. So here, we are going to take that tuple,
+                # and unpack it to get this customer object. This is why we are wrapping this in paranthesis, and adding
+                # a second variable called 'created'. So we are unpacking that tuple.
+                (customer, created) = Customer.objects.get_or_create(
+                    user_id=request.user.id)
+
+                if request.method == 'GET':
+                    serializer = CustomerSerializer(customer)
+                    return Response(serializer.data)
+                elif request.method == 'PUT':
+                    serializer = CustomerSerializer(customer, data=request.data)
+                    # we validate the incoming data:
+                    serializer.is_valid(raise_exception=True)
+                    serializer.save()
+                    return Response(serializer.data)
+
+  Now we can get and update current user's profile.
+  You can go and test it => http://127.0.0.1:8000/store/customers/me/
+
+
+- Applying Permissions
+  
+  In DRF's website, let's go to the permissions => https://www.django-rest-framework.org/api-guide/permissions/
+  As you can see, here we have a bunch of permission classes.
+  AllowAny, for example, is applied globally by default, that is why we can access all API endpoints without logging in. 
+  
+  How can we use these permission classes?
+  
+  One way is to apply them globally.
+  So in the settings for the rest framework in the settings module, we can add default permission classes:
+
+        REST_FRAMEWORK = {
+            .
+            .
+            'DEFAULT_PERMISSION_CLASSES':(
+                # the default value is => 'rest_framework.permissions.IsAuthenticated'
+                'rest_framework.permissions.IsAuthenticated',
+                # now all our api endpoints are closed to anonymous users.
+                # So if we open the browser in incognito mode, and go to one of our endpoints, we will get 401 response.
+                # Here we can apply one or more permission classes globally, and then if we want to, we can always
+                # override this permissions on specific views.
+            )
+        }
+    
+    For now we delete the above setting and don't add a permission class to the settings.py.
+  
+  Or we can set them in view sets. Now let's go to CustomerViewSet in store.views.py:
+
+        from rest_framework.permissions import AllowAny, IsAuthenticated
+
+        class CustomerViewSet(CreateModelMixin, RetrieveModelMixin, UpdateModelMixin, GenericViewSet):
+            queryset = Customer.objects.all()
+            serializer_class = CustomerSerializer
+
+            # here we can set a list of one or more permission classes:
+            # why do we need a list here? Because we can supply multiple permission classes, and if any of them fails,
+            # then the client will not be able to access this view.  
+            permission_classes = [IsAuthenticated]
+
+            # above we set the permission_classes. But, if we want to, we can override this permission in actions,
+            # adding another argument called permission_classes. For example:
+                # @action(detail=False, methods=['GET', 'PUT'], permission_classes=[...])
+                # def me(self, request):
+            # But we don't do that.
+
+            # What if we want to have different permissions for different actions like create and retrieve?
+            # Let's say, we want anyone to be able to retrieve a customer object, but only authenticated users 
+            # or admin users can update a customer object.
+            # For that, we need to override a method that we inherit in this viewset called 'get_permissions':
+
+            def get_permissions():
+                if self.request.method == 'GET':
+                    return [AllowAny()]
+                    # note that, in this case, we add paranthesis after the class name, because this we return a list of permission objects. 
+                return [IsAuthenticated()]
+
+            @action(detail=False, methods=['GET', 'PUT'])
+            def me(self, request):
+                .
+                .
+                .
+
+- Applying Custom Permissions
+
+  We want only admin users to be able to modify products, but anyone, including anonymous users should be able to 
+  retrieve the list of products. 
+
+  Now if you go back to the documentation => https://www.django-rest-framework.org/api-guide/permissions/
+  As you can see, we don't have a class called 'IsAdminOrReadOnly'. We only have 'IsAuthenticatedOrReadOnly'.
+  So this is a situation where we need to create a custom permission.
+
+
+  We add a new file called 'permissions.py' to the store app, and in this file:
+        
+        from rest_framework import permissions
+
+        # we create a new class that extends the BasePermission class:
+        class IsAdminOrReadOnly(permissions.BasePermission):
+            # here we override the has_permission method:
+            def has_permission(self, request, view):
+                if request.method == 'GET':
+                    return True
+                return bool(request.user and request.user.is_staff)
+
+  
+  But there is a tiny issue here
+        
+        if request.method == 'GET':
+
+  With the current implementation, even HEAD or OPTION requests require the user to be an admin. We certainly don't want 
+  that to be the case. So a better way to write this condition is like this:
+
+        if request.method in permissions.SAFE_METHODS:
+
+  This is how we create a custom permission class.
+
+  Now let's apply this to ProductViewSet. In ProductViewSet in store.views:
+
+        .
+        .
+        permission_classes = [IsAdminOrReadOnly]
+        .
+        .
+ 
+  Go and test what we have done => http://127.0.0.1:8000/store/products/
+
+  So we secured our products endpoint. Now let's do the same for collections endpoint. In CollectionViewSet:
+
+        permission_classes = [IsAdminOrReadOnly]
+  
+  We don't apply any permissions for carts endpoint. Because anyone, including anonymous users, should be able to 
+  create a shopping cart. 
+
+  Now, the customers endpoint. We want to make sure that only authenticated users can access this endpoint. 
+
+  In CustomerViewSet, we remove the get_permissions method, and add => permission_classes = [IsAdminOrReadOnly]. 
+  Here is our current CustomerViewSet:
+
+        class CustomerViewSet(ModelViewSet):
+            queryset = Customer.objects.all()
+            serializer_class = CustomerSerializer
+            permission_classes = [IsAdminUser]
+
+            @action(detail=False, methods=['GET', 'PUT'], permission_classes=[IsAuthenticated])
+            def me(self, request):
+                (customer, created) = Customer.objects.get_or_create(
+                    user_id=request.user.id)
+
+                if request.method == 'GET':
+                    serializer = CustomerSerializer(customer)
+                    return Response(serializer.data)
+                elif request.method == 'PUT':
+                    serializer = CustomerSerializer(customer, data=request.data)
+                    serializer.is_valid(raise_exception=True)
+                    serializer.save()
+                    return Response(serializer.data)
+
+
+  We also want to make some changes in CustomerViewSet. Currently our CustomerViewSet allows for certain operations:
+
+        class CustomerViewSet(CreateModelMixin, RetrieveModelMixin, UpdateModelMixin, GenericViewSet)
+  
+  We want it to allow for all operations, so, instead of using mixins, we are going to extend the ModelViewSet, then
+  we will apply further permissions for some of these operations:
+
+        class CustomerViewSet(ModelViewSet):
+            queryset = Customer.objects.all()
+            serializer_class = CustomerSerializer
+            permission_classes = [IsAdminUser]
+
+            @action(detail=False, methods=['GET', 'PUT'], permission_classes=[IsAuthenticated])
+            def me(self, request):
+                (customer, created) = Customer.objects.get_or_create(
+                    user_id=request.user.id)
+
+                if request.method == 'GET':
+                    serializer = CustomerSerializer(customer)
+                    return Response(serializer.data)
+                elif request.method == 'PUT':
+                    serializer = CustomerSerializer(customer, data=request.data)
+                    serializer.is_valid(raise_exception=True)
+                    serializer.save()
+                    return Response(serializer.data)
+  
+  Now in the link => http://127.0.0.1:8000/store/customers
+  Now if are logged in, we can see all customers; and if we are an admin, we can also see the post box.
+  Also in the link => http://127.0.0.1:8000/store/customers/me/
+  we can access our current customer record.  
+
+
+
+- Applying Model Permissions
+
+  In our current implementation, in CustomerViewSet, only admin users can manage customers via the customers endpoint.
+  But, if you remember, earlier in the course, we created a group called 'Customer Service' in the admin site.
+  Now, what if you want to allow these people to manage customers by our API as well?
+  This is where we use Django Model Permissions. 
+
+  So in CustomerViewSet, we are going to use another permission class called 'DjangoModelPermissions':
+
+        permission_classes = [DjangoModelPermissions]
+
+  With this permission, the user has to be authenticated, and they should have the relevant model permissions.
+
+  So now, only users in the 'Customer Service' group can add, change, delete customers. 
+  Anonymous users (users that are not authenticated) gets 401 Unauthorized response to the GET request.
+  But users that are authenticated but not in this group still can retrieve and list customers.
+  Why is that happening?
+
+  Look at the implementation of the DjangoModelPermissions class:
+
+            .
+            .
+            perms_map = {
+                'GET': [],
+                'OPTIONS': [],
+                'HEAD': [],
+                'POST': ['%(app_label)s.add_%(model_name)s'],
+                'PUT': ['%(app_label)s.change_%(model_name)s'],
+                'PATCH': ['%(app_label)s.change_%(model_name)s'],
+                'DELETE': ['%(app_label)s.delete_%(model_name)s'],
+            }
+            .
+            .
+  
+  As you can see, we have a dictionary of permissions.
+  The permissions dictionary specifies the required permissions for each HTTP method.
+  For GET, OPTIONS, and HEAD, no specific permissions are required.
+
+  To solve this problem, and prevent people outside of the 'Customer Service' group from viewing data, 
+  we need to create a custom permission class, and extend DjangoModelPermissions.
+
+  So in store.permissions.py:
+
+        class FullDjangoModelPermissions(permissions.DjangoModelPermissions):
+            # first we define a constructor:
+            def __init__(self) -> None:
+                self.perms_map['GET'] = ['%(app_label)s.view_%(model_name)s']
+                # to send a get request, the user should have the view permission.
+  
+  And now we are going to use this permission in CustomerViewSet:
+
+        permission_classes = [FullDjangoModelPermissions]
+  
+  Now, users outside the 'Customer Service' group can no longer list or retrieve customers.
+  Even though we are authenticated, but because we are not in the Customer Service group, we get 403 Forbidden response.
+
+  Side Note: We have another similar called 'DjangoModelPermissionsOrAnonReadOnly'. 
+             This is exactly like DjangoModelPermissions class; but in DjangoModelPermissionsOrAnonReadOnly class,
+             anonymous users will also have read-only access to data.
+  
+  So, this is how model permissions work.
+
+  But for this project, this is a bit of overengineering; we don't really need that level of complexity in this project.
+  We included this section in the course just in case we have scenarious like that in real life.
+  For this project, we want to limit customer management operations only to admin users:
+
+        permission_classes = [IsAdminUser]
+
+   
+
+- Applying Custm Model Permissions
+  
+  In the previous section (Section 5-Django Authentication System / Lesson 7-Creating Custom Permissions), 
+  we created a custom model permission called 'Can cancel order'.
+  Now let's see how we can apply these custom model permissions to our API endpoints.
+  
+  For this lesson, because currently we don't have the order's API, we are going to create a custom permission
+  for our customer model. 
+       
+  
+
+    
+
+
+  
+
+
+
+
+            
+
+
+
+
+  
+
+    
+
+
+
+            
+
+
+
+  
+
+
+
+
+
+
+
+
+  
