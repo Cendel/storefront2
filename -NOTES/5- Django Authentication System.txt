@@ -409,7 +409,7 @@ Let's click on the BaseUserAdmin and see its implementation:
         class Meta:
             permissions = [
                 # each tuple represents a permission
-                # in each tuple, the first one is the code name, the other is description
+                # in each tuple, the first one is the code name, the other is the description
                 ('cancel_order', 'Can cancel order')
             ]
 

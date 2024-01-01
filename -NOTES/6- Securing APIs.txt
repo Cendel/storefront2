@@ -839,15 +839,92 @@ Topics:
 
    
 
-- Applying Custm Model Permissions
+- Applying Custom Model Permissions
   
   In the previous section (Section 5-Django Authentication System / Lesson 7-Creating Custom Permissions), 
-  we created a custom model permission called 'Can cancel order'.
+  we created a custom model permission called 'Can cancel order' for our Order model.
   Now let's see how we can apply these custom model permissions to our API endpoints.
   
-  For this lesson, because currently we don't have the order's API, we are going to create a custom permission
-  for our customer model. 
+  For this lesson, because currently we don't have the orders API, we are going to learn how to apply custom model 
+  permissions over our Customer model.
+  First we are going to create a custom permission for our customer model. In Customer class in store.models:
+
+        class Meta:
+            .
+            .
+            permissions = [
+                # each tuple represents a permission
+                # in each tuple, the first one is the code name, the other is the description
+                # we often use this convention
+                ('view_history', 'Can view history')
+            ]
        
+  python manage.py makemigrations
+  python manage.py migrate
+
+  Now we go to CustomerViewSet and create a custom action. In CustomerViewSet:
+
+        .
+        .
+        # Just like we have the me action in this view, we are going to create the history action for viewing 
+        # the history of a particular customer:
+        
+        # remember for list, detail is set to False; but as this is for a particular customer, detail=True.
+        @action(detail=True)
+        def history(self, request, pk):
+            # we also needed a 'pk' in the parameters, because this is a particular customer
+            # Before going further, let's just return a simple response:
+            return Response('ok')
+        .
+        .
+  
+  Now let's go to the history endpoint => http://127.0.0.1:8000/store/customers/1/history/
+  As you can see, we get the response.
+
+  So now let's apply the permission.
+  For that, we need to create a new permission class. In store.permissions.py:
+
+        class ViewCustomerHistoryPermission(permissions.BasePermission):
+            # here we override the has_permission method:
+            def has_permission(self, request, view):
+                # This user object has a method called 'has_perm', and here we pass the app_name.codename for the permission:
+                return request.user.has_perm('store.view_history')
+                # If this returns true, then the user is going to have permission, and they will be able to access the history.
+  
+  So the final step is to go to our CustomerViewSet and decorate the custom action with our new permission class:
+
+        .
+        .
+        @action(detail=True, permission_classes=[ViewCustomerHistoryPermission])
+            def history(self, request, pk):
+        .
+        .
+  
+  Now go to => http://127.0.0.1:8000/store/customers/1/history/
+  As you can see, because our user doesn't have this permission, we get the following response:
+        "detail": "You do not have permission to perform this action."
+  
+  So go to admin panel and give the 'view history' permission for our user.
+  Now again go to => http://127.0.0.1:8000/store/customers/1/history/
+  Now we have the permission.
+
+  Now an importing thing to note:
+    
+    Go to list of user in admin panel => http://127.0.0.1:8000/admin/core/user/
+    On the right side, we have a filter. On the 'By groups' tap, we can filter the users according
+    to their permission groups. 
+    Now click on the Customer Service to filter the users. 
+    Here we can see the list of users in the Customer Service group.
+    But we don't have this filtering for permissions. We can only filter by groups.
+    That's why we should avoid ad hoc permission.
+    We implemented this permission functionality just for the sake of practice.
+    You should never apply ad hoc permissions. Because then over time, it becomes really 
+    hard to see who has what permissions.
+    Always create groups, add permissions to your groups, and then add users to groups.
+    This way you can easily filter users by groups to see who has what kind of permissions.
+
+
+
   
 
     
