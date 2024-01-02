@@ -2,4 +2,209 @@
 
 - Designing the API
 
+  Let's plan out what we are going to build in this section.
+
+  We are going to build a new endpoint for managing orders.
+
+  Orders Endpoint:
+    HTTP Method     url             Request        Response
+    POST            /orders/        {cartId}       order
+    GET             /orders/        {}             order[]
+    GET             /orders/1       {}             order
+    PATCH           /orders/1        
+    DELETE          /orders/1
+
+
+
+- Getting the Orders
+
+  Because creating an order is a bit more complex, we preferred here to start with getting the Orders, 
+  which is something simple. So we have a foundation, and then we will work on creating an order.
+  So always start simple, always build a foundation, and then gradully build things up step by step.
+
+  When getting an order, we want to see:
+
+        all attributes of the order
+        order items
+            and for each order items: a nested product object
+
   
+  In serializers.py:
+
+        class OrderSerializer(serializers.ModelSerializer):
+
+            class Meta:
+                model = Order
+                fields = ['id', 'customer', 'placed_at', 'payment_status']
+
+  
+  In views.py:
+
+        class OrderViewSet(ModelViewSet):
+            queryset = Order.objects.all()
+            serializer_class = OrderSerializer
+
+  
+  In urls.py:
+
+        router.register('orders', views.OrderViewSet)
+  
+  We have created our endpoint and it is working:
+
+        [
+            {
+                "id": 1,
+                "customer": 3,
+                "placed_at": "2021-09-01T00:00:00Z",
+                "payment_status": "P"
+            }
+        ]
+  
+  Now we will add order items to the response.
+  For that, first we will create a serializer for OrderItem.
+  But note that we will create it before the OrderSerializer class, because we will use it there.
+  
+  In serializers.py:
+
+        class OrderItemSerializer(serializers.ModelSerializer):
+
+            class Meta:
+                model = OrderItem
+                fields = ['id', 'product', 'unit_price', 'quantity']
+                # OrderItem model has a field 'Order', but we are not including it here. Because we will use
+                # this serializer inside OrderSerializer.
+  
+  Now we add items in OrderSerializer:
+
+        class OrderSerializer(serializers.ModelSerializer):
+            items = OrderItemSerializer(many=True)
+
+            class Meta:
+                model = Order
+                fields = ['id', 'customer', 'placed_at', 'payment_status', 'items']
+
+  And we change the related_name in the 'order' field of the OrderItem model. So in models.py: 
+  
+        class OrderItem(models.Model):
+            order = models.ForeignKey(Order, on_delete=models.PROTECT, related_name='items')
+            .
+            .
+  
+  Now we can see the order items:
+
+        [
+            {
+                "id": 1,
+                "customer": 3,
+                "placed_at": "2021-09-01T00:00:00Z",
+                "payment_status": "P",
+                "items": [
+                    {
+                        "id": 1,
+                        "product": 1,
+                        "unit_price": 10.0,
+                        "quantity": 10
+                    },
+                    {
+                        "id": 2,
+                        "product": 2,
+                        "unit_price": 20.0,
+                        "quantity": 20
+                    }
+                ]
+            }
+        ]
+  
+  But let's change product to a nested object. So this way we can return all critical information about each 
+  product so the client doesn't have to send additional requests for each product in the order.
+  
+  So finally in OrderItemSerializer, we set the product field to our SimpleProductSerializer:
+
+        product = SimpleProductSerializer()
+
+
+
+- Applying Permissions
+  
+  in OrderViewSet:
+
+        permission_classes = [IsAuthenticated]
+  
+  But we are not done. Currently all authenticated users can see others' orders.
+  So we should change the queryset logic in order to ensure that only admins can see others' orders, and authenticated 
+  users can only see theirs.
+
+  So in OrderViewSet:
+
+        class OrderViewSet(ModelViewSet):
+            serializer_class = OrderSerializer
+            permission_classes = [IsAuthenticated]
+
+            def get_queryset(self):
+                user = self.request.user
+                if user.is_staff:
+                    return Order.objects.all()
+                # If user is not admin:
+                # Here we need the customer id of the current user in order to do the filtering.
+                # But because the customer id is not included in the JSON web token, we need to calculate
+                # the customer id using the user id:
+                customer_id = Customer.objects.only('id').get(user_id=user.id)
+                return Order.objects.filter(customer_id=customer_id)
+
+                # Note about a line of code above:
+                # When we say => 'Customer.objects.get(user_id=user.id)'
+                # It will retrieve the entire Customer object. But we only need the id field of this object.
+                # Then it would be a good practice to write it that way:
+                # Customer.objects.only('id').get(user_id=user.id)
+
+
+  By default, DRF uses the queryset attirubutes to figure out the basename. But because we deleted the queryset attiribute,
+  and now we are overriding the get_queryset method, DRF cannot figure out what the basename should be called. 
+  So we have to explicitly specify the basename in urls.py:
+
+        router.register('orders', views.OrderViewSet, basename='orders')
+  
+  There is one more tiny issue about our following code in OrderViewSet:
+
+        customer_id = Customer.objects.only('id').get(user_id=user.id)
+  
+  Here is the problem: Imagine that there is no customer record for the given user.
+  The 'get' method expects one record in the database. If we have zero records or more than one record matching 
+  the criteria, we are going to get an exception. So, taking into account that the user might have no customer record,
+  we can write this line as the following:
+
+            # the 'get_or_create' method that we will use in the following line returns a tuple with two values.
+            # The first value is the object we are reading, the second is a boolean that indicates if a record was 
+            # created or not. This is why we are writing it that way => '(customer_id, created)'
+            
+            (customer_id, created) = Customer.objects.only('id').get_or_create(user_id=user.id)
+    
+  Now, it creates customer record for the user if the user doesn't have one.
+  BUT, even though by using this method we solve this problem, here we are violating an important principle
+  in programming. And that is called 'Command Query Separation', which means, our methods or our functions should
+  either be commands and changes the state of the system, or they should be queries, returning only data and not changing 
+  the state or data in the system.
+  In our case, the get_queryset method is purely for getting data. But with our last implementation, we also cause
+  a change in the state of the system. So this is the violation of the command query separation principle. When you
+  violate this principle, your software becomes unpredictable. You will end up with weird result and side effects.
+
+  So later in this section, we will learn a better technique for solving this problem. For now, we leave it as it is. 
+
+
+
+- Creating an Order
+  
+
+
+
+
+
+
+
+  
+
+  
+
+
+
+

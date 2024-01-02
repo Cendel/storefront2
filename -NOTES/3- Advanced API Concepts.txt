@@ -455,8 +455,12 @@
             router.register('products', views.ProductViewSet, basename='products')
 
         By default, DRF uses the queryset attirubutes to figure out the basename. But because we deleted the queryset attiribute,
-        and now we have a method, DRF cannot figure out what the basename should be called. The logic in the get_queryset is
-        too complex for it. So we have to explicitly specify the basename.
+        and now we are overriding the get_queryset method, DRF cannot figure out what the basename should be called. 
+        So we have to explicitly specify the basename in urls.py.
+        Why does DRF need this basename?
+        Usage of basename: The basename is used by DRF to generate the names of the views. It’s used for registry purposes 
+        and is based on the queryset attribute of the viewset. If the queryset is not defined in the viewset, the basename 
+        must be set when registering the viewset.
     
     Now when we hit http://127.0.0.1:8000/store/products/ we get all the products.
     and when we hit http://127.0.0.1:8000/store/products?collection_id=6 we get only the products with collection_id=6

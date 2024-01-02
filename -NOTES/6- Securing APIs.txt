@@ -622,7 +622,7 @@ Topics:
             )
         }
     
-    For now we delete the above setting and don't add a permission class to the settings.py.
+    For now we delete the above setting and don't set a permission class to the settings.py.
   
   Or we can set them in view sets. Now let's go to CustomerViewSet in store.views.py:
 
