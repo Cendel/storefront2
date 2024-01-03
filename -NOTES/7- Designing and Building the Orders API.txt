@@ -194,6 +194,468 @@
 
 - Creating an Order
   
+  As we told at the beginnig of this section, when creating an order, all we need to send to the server is the Cart ID.
+  So we cannot use the OrderSerializer because the object that we are representing in the fields in OrderSerializer
+  has a completely different shape from the object we need to send to the server. So we need a new serializer.
+  So in serializers.py:
+
+
+        # Here we are not going to user ModelSerializer because we are not going to use a Meta class that is based on
+        # the Order model. Why? Because Cart ID is not a field in the Order class.
+        # So instead of ModelSerializer, we are going to use the base Serializer class. And that means we don't need
+        # the Meta class. We are going to explicitly define a cart_id field:
+        
+        class CreateOrderSerializer(serializers.Serializer):
+            cart_id = serializers.UUIDField()
+
+            # we need to override the Save method because the logic for saving an order is very specific.
+            # It is not something we want Django to generate for us. So we have to go to the shopping cart table,
+            # and we have to grab all cart items, and move them to the order items table,
+            # and then delete the shopping cart.
+            # For now, we are just going to print the cart id in the save method, and test our implementation,
+            # then we will return here and complete our logic:
+            
+            def save(self, **kwargs):
+                cart_id = self.validated_data['cart_id']
+                print(cart_id)
+                # What about the user id? Here we don't have access to the request object, because we are inside a serializer.
+                # So we have to go to our view set, and using a context object, pass the user id here. 
+                # So in OrderViewSet:
+
+                            def get_serializer_context(self):
+                                # here we will return a dictionary with user id, and we set it to self.request.user.id
+                                return {'user_id': self.request.user.id}
+                
+                then we continue working on our Save method:
+                print(self.context['user_id'])
+                # (we used print methods here to test our implementation)
+
+  The next step is to use this serializer in our view set.
+  In OrderViewSet:
+        
+        # we delete the serializer_class attribute that we set before. Because now we have more than one serializer
+        # for this view. We override the get_serializer_class method:
+
+        def get_serializer_class(self):
+            if self.request.method == 'POST':
+                return CreateOrderSerializer
+            return OrderSerializer
+
+  Now we can test our implementation => http://127.0.0.1:8000/store/orders/
+  As you can see, we can post a cart id. But currently we don't have a cart.
+  So we go to => http://127.0.0.1:8000/store/carts/    and create a cart.
+  We copy the cart id and post it in => http://127.0.0.1:8000/store/orders/
+  As you can see, we see the cart id and user id printed in the terminal. Our implementation works. 
+
+  Now we return back to our serializer, and complete the logic:
+
+        class CreateOrderSerializer(serializers.Serializer):
+            cart_id = serializers.UUIDField()
+
+            def save(self, **kwargs):
+
+                # when creating the order object, we pass only the customer because the 'placed_at' field is set
+                # automatically, and the 'payment_status' field has a default value, and we have no other fields:
+                # But first we need to get the customer:
+                (customer, created) = Customer.objects.get_or_create(user_id=self.context['user_id'])
+                # Note that in this case get_or_create method doesn't violate the Command Query Separation principle,
+                # because with the Save method, we are already changing the state of the system. So we are not in a
+                # query method, we are already in a command.
+                Order.objects.create(customer=customer)
+  
+  Now test our implementation before going further => http://127.0.0.1:8000/store/orders/
+
+
+- Creating Order Items
+
+  For creating Order items, first we need to get items in the cart, and then for each cart item, we need to create 
+  an order item, and save it in the database. 
+  So continue working on CreateOrderSerializer:
+
+
+    class CreateOrderSerializer(serializers.Serializer):
+        cart_id = serializers.UUIDField()
+
+        def save(self, **kwargs):
+            (customer, created) = Customer.objects.get_or_create(
+                user_id=self.context['user_id'])
+
+            order = Order.objects.create(customer=customer)
+
+            # So we get a queryset of cart items. But doing that, we need to use select_related. Because when initializing
+            # the order items below, we are going to user 'item.product', which means when retrieving the cart items we need
+            # to eager load them with theri product. This is why we use select_related:
+            cart_items = CartItem.objects\
+                                .select_related('product')\
+                                .filter(cart_id=cart_id)
+
+            # now we convert each item to an order item. We are going to do that with list comprehension, and in each
+            # iteration of this list comprehension we are going to initialize an OrderItem object, and finally we save
+            # the list in 'order_items' attribute:
+            order_items = [
+                OrderItem(
+                    order=order,
+                    product=item.product,
+                    unit_price=item.product.unit_price,
+                    quantity=item.quantity
+                ) for item in cart_items
+            ]
+
+            # now we need to save this 'order_items'. We will not do that by iterating over them and saving them
+            # individually. Because that would be too many queries to the database.
+            # So we are going to insert them in bulk. And for that, we have a method called 'bulk_create':
+
+            OrderItem.objects.bulk_create(order_items)
+
+            # Finally, we need to delete the shopping cart:
+
+            Cart.objects.filter(pk=cart_id).delete()
+
+
+
+  Now test our implementation. But first we created sample cart and cart items:
+
+        create a cart => http://127.0.0.1:8000/store/carts/
+        copy the id of the cart, past it to the url and then create cart items:
+            http://127.0.0.1:8000/store/carts/d58b158d-f155-4cba-b7ed-558854b2da17/items/
+        then go to => http://127.0.0.1:8000/store/orders/  and post the cart id
+        now our cart is created, and at the same time, the shopping cart is deleted.
+  
+  
+  
+  Our current CreateOrderSerializer is as follows:
+
+        class CreateOrderSerializer(serializers.Serializer):
+            cart_id = serializers.UUIDField()
+
+            def save(self, **kwargs):
+                cart_id = self.validated_data['cart_id']
+                (customer, created) = Customer.objects.get_or_create(
+                    user_id=self.context['user_id'])
+
+                order = Order.objects.create(customer=customer)
+
+                cart_items = CartItem.objects\
+                                    .select_related('product')\
+                                    .filter(cart_id=cart_id)
+
+                order_items = [
+                    OrderItem(
+                        order=order,
+                        product=item.product,
+                        unit_price=item.product.unit_price,
+                        quantity=item.quantity
+                    ) for item in cart_items
+                ]
+
+                OrderItem.objects.bulk_create(order_items)
+                
+                Cart.objects.filter(pk=cart_id).delete()
+
+
+  With this implementation, we are doing multiple operations in CreateOrderSerializer:
+    
+    1- creating an order
+    2- creating a bunch of order items
+    3- deleting the cart
+
+  So we have multiple updates in the database. 
+  What if our database server goes offline in the middle of one of these updates?
+  We would end up in an inconsistent state; some of the data would be missing. 
+
+  This is where we use a transaction. 
+  Using a transaction, we can treat a block of code as atomic.
+  So every code in that block should be executed, or if something goes wrong, all the Save changes should be rolled back.
+  This is the benefit of using transactions. 
+  So we are going to use transaction in our code:
+
+    from django.db import transaction
+
+
+        class CreateOrderSerializer(serializers.Serializer):
+            cart_id = serializers.UUIDField()
+
+            def save(self, **kwargs):
+                # All we have to do is just to wrap the entire code in the Save method inside a transaction. 
+                # the 'atomic' method returns the transaction object that we pass with a with block:
+                
+                with transaction.atomic():
+                    cart_id = self.validated_data['cart_id']
+                    (customer, created) = Customer.objects.get_or_create(
+                        user_id=self.context['user_id'])
+
+                    order = Order.objects.create(customer=customer)
+
+                    cart_items = CartItem.objects\
+                                        .select_related('product')\
+                                        .filter(cart_id=cart_id)
+
+                    order_items = [
+                        OrderItem(
+                            order=order,
+                            product=item.product,
+                            unit_price=item.product.unit_price,
+                            quantity=item.quantity
+                        ) for item in cart_items
+                    ]
+
+                    OrderItem.objects.bulk_create(order_items)
+
+                    Cart.objects.filter(pk=cart_id).delete()
+
+
+- Returning the Created Order
+  
+  Currently when we created an order, the client get the cart_id as a response.
+  We have to fix this. The client should recieve the order as a response.
+  (For further clarification as to why we have this problem and why we are solving this by overriding
+  the create method, look at the beginning of the video of this lesson => 7-Returning the Created Order)
+
+  Now we need to override the create method in OrderViewSet.  
+  We are going to use two different serializers in this create method. 
+  We will use one serializer (CreateOrderSerializer) to deserialize the data and get the cart id, 
+  and another serializer (OrderSerializer) to return the order back to the client.
+
+  Our current OrderViewSet is as follows:
+
+        class OrderViewSet(ModelViewSet):
+            permission_classes = [IsAuthenticated]
+
+            def get_serializer_class(self):
+                if self.request.method == 'POST':
+                    return CreateOrderSerializer
+                return OrderSerializer
+
+            def get_serializer_context(self):
+                return {'user_id': self.request.user.id}
+
+            def get_queryset(self):
+                user = self.request.user
+                if user.is_staff:
+                    return Order.objects.all()
+                (customer_id, created) = Customer.objects.only(
+                    'id').get_or_create(user_id=user.id)
+                return Order.objects.filter(customer_id=customer_id)
+
+  
+  In OrderViewSet:
+
+
+        class OrderViewSet(ModelViewSet):
+            permission_classes = [IsAuthenticated]
+
+            def create(self, request, *args, **kwargs):
+                # when creating the serializer in the following line, we also need to give it the context object,
+                # so we have access to the user id. And now that we defined the user_id context object here,
+                # we delete the get_serializer_context method we previously created in OrderViewSet.
+                serializer = CreateOrderSerializer(data=request.data, context={
+                                                'user_id': self.request.user.id})
+                serializer.is_valid(raise_exception=True)
+                order = serializer.save()
+                # because we are going to pass the order object in the following serializer,
+                # first we got it from the above save method.
+                # But how do we get it by saying =>  'order = serializer.save()'
+                # We get it because we add the following line at the end of the CreateOrderSerializer:
+                #     return order
+                # Now we will give it to the OrderSerializer.
+                # So we create a new serializer, set it to OrderSerializer, and give it our order object:
+                serializer = OrderSerializer(order)
+                # finally we return the response
+                return Response(serializer.data)
+
+            def get_serializer_class(self):
+                if self.request.method == 'POST':
+                    return CreateOrderSerializer
+                return OrderSerializer
+
+            def get_queryset(self):
+                user = self.request.user
+                if user.is_staff:
+                    return Order.objects.all()
+                (customer_id, created) = Customer.objects.only(
+                    'id').get_or_create(user_id=user.id)
+                return Order.objects.filter(customer_id=customer_id)
+
+
+- Data Validation
+
+  So we tested our implementation with valid data.
+
+  Let's see what happens if we receive invalid data.
+  So there are two scenarios we need to consider here:
+  
+  One is that we receive an invalid cart (a cart that doesn't exist).
+  The other is we receive an empty cart (a cart with no items).
+
+
+  In CreateOrderSerializer, before the save method:
+
+        class CreateOrderSerializer(serializers.Serializer):
+            cart_id = serializers.UUIDField()
+            
+            # We want to validate cart_id. So we create a validate_cart_id method:
+            def validate_cart_id(self, cart_id):
+                # first we want to make sure if this cart exist:
+                if not Cart.objects.filter(pk=cart_id).exists():
+                    raise serializers.ValidationError(
+                        'No cart with the given ID was found.')
+                # we want to make sure if this cart is not empty:
+                if CartItem.objects.filter(cart_id=cart_id).count() == 0:
+                    raise serializers.ValidationError('The cart is empty.')
+                return cart_id
+            
+            .
+            .
+            .
+
+
+- Revisiting the Permissions
+  
+  Our current permission setting in OrderViewSet:
+
+        permission_classes = [IsAuthenticated]
+  
+  So currently, all authenticated users can do all kinds of operations. We want some operations restricted
+  only to admins. 
+  So we delete the above permissions and create a get_permissions method:
+
+        class OrderViewSet(ModelViewSet):
+
+            # We do not need the 'PUT' method in this view. In order to prevent 'PUT' requests, we will override
+            # the http_method_names attiribute, and exclude the 'put' method:
+            http_method_names = ['get', 'post', 'patch', 'delete', 'head', 'options']
+
+            def get_permissions(self):
+                if self.request.method in ['PATCH', 'DELETE']:
+                    return [IsAdminUser()]
+                return [IsAuthenticated()]
+
+
+- Updating an Order
+  
+  When we go to an order item on the browser => http://127.0.0.1:8000/store/orders/3/
+  In the patch box we see all its properties:
+
+        {
+            "id": 3,
+            "customer": 5,
+            "placed_at": "2024-01-02T16:12:37.758508Z",
+            "payment_status": "P",
+            "items": [
+                .
+                .                
+            ]
+        }
+
+  In our order object, we have (id, customer, placed_at, payment_status, and items) fields. But we don't want to patch
+  all these properties. Among these fields, we only need the payment_status property because we don't want to update 
+  other properties. They shouldn't be seen here; they should be read-only.
+
+  We have two ways to implement this in OrderSerializer:
+    1- define the fields outside the Meta class and mark them as read-only, except payment_status.
+    2- create a custom serializer for updating.
+  The second approach is better because our code will be much cleaner.
+
+  So in serializers.py:
+
+        class UpdateOrderSerializer(serializers.ModelSerializer):
+            class Meta:
+                model = Order
+                fields = ['payment_status']
+  
+  and finally, in OrderViewSet:
+
+        we add the update logic in get_serializer_class:
+
+            def get_serializer_class(self):
+                .
+                .
+                elif self.request.method == 'PATCH':
+                    return UpdateOrderSerializer
+                .
+                .
+  
+
+
+- Signals
+
+  In Django, we use signals to decouple our apps, and prevent them from stepping on each other's toes.
+  For example, as we talked about earlier, we have the following situation in OrderViewSet:
+
+        def get_queryset(self):
+        .
+        .
+            (customer_id, created) = Customer.objects.only('id').get_or_create(user_id=user.id)
+        .
+        .
+  
+  Using get_or_create method presents a violation of the Command Query Separation principle.
+  Because this is a query method, so we call it to get some data.
+  But, using the get_or_create method inside it, we are potentially changing the state or the data in the system. 
+  Our methods should either be commands, and change the state of the system, or should be queries, so they should
+  return data, but not both. 
+
+  How can we solve this problem?
+
+  We should always think about the underlying cause. The reason we have to use the get_or_create method here is
+  because it is possible that at the time the get_queryset method is called, we don't have a customer associated
+  with this user.
+
+  What if when someone registers, we automatically create a customer record for that user?
+  Now we can go to UserCreateSerializer in core.serializers.py, and in this serializer we can override the save method:
+
+        class UserCreateSerializer(BaseUserCreateSerializer):
+            def save(self, **kwargs):
+                user = super().save(**kwargs)
+                Customer.objects.create(user=user)
+            .
+            .
+  
+  Pretty simple.
+  But if you remember, earlier, we didn't like the idea of touching customer profiles in this serializer.
+  If you remember, we didn't want to include the birth_date field here. Because with this approach, as our registration
+  form gets more complex, this UserCreateSerializer has to worry about more aspects of the application. 
+  So it is going to become more responsible for many other things.
+
+  In this particular case, this is only one extra line of code. And this is really not a big issue. 
+  But there is another way to solve this problem. 
+  This is where we can use signals.
+
+  So in Django, our models have a bunch of signals, or notifications that are fired at different times.
+  For example:
+
+        pre_save => which is fired before a model is saved
+        post_save => which is fired after a model is saved
+        pre_delete => which is fired before a model is saved
+        post_delete => which is fired before a model is saved
+  
+  So in our application, we can listen to this notifications, and do something. 
+
+  Here is our current implementation:
+    
+    Core app => where we have UserCreateSerializer, that is responsible for two things:
+                creating user - creating customer
+
+  Now what if we go in the store app, and listen to the post_save signal of the user model?
+  We are going to get notified when a user registers, and then we can create a customer record right there.
+  So with this approach, we can shift the responsibility of creating a customer from the Core app to the Store app.
+  So the responsibilities are better distributed across various apps. 
+
+
+  Let's see how we can put this in action.
+  First delete the save method we created in UserCreateSerializer in this lesson.
+  Then, in the store app, add a new file called 'signals.py'.
+
+
+
+  
+        
+
+  
+
+  
+
+
 
 
 
